@@ -122,6 +122,7 @@ src/           React 界面，按域拆（actions / library / changes / system �
 
 - [`docs/architecture.md`](docs/architecture.md) — 数据模型、写入路径、并发与冲突、索引重建
 - [`docs/lifecycle.md`](docs/lifecycle.md) — 生命周期模型、活性与翻新机制
+- [`docs/workflow.md`](docs/workflow.md) — 开发与日常使用怎么分开，升级怎么不出事
 
 ## 安全与隐私
 

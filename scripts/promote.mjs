@@ -144,7 +144,7 @@ if (dryRun) {
   console.log(`  · 切到 ${targetShort}`);
   if (lockChanged) console.log('  · 依赖变了，需要 npm ci');
   console.log('  · npm run build');
-  if (!skipTest) console.log('  · npm test');
+  if (!skipTest) console.log('  · npm run test:unit');
   console.log(`  · 重启：${restartCmd || '(未配置)'}`);
   console.log('  · 健康检查 + 对象数/解析率对比，任一项不过自动回滚');
   process.exit(0);
