@@ -152,4 +152,4 @@ E2E 在仓库内的 `.e2e-space` 里跑，每次重建，不碰你的真实数�
 
 ## 许可
 
-MIT
+Apache License 2.0 —— 见 [LICENSE](LICENSE)
