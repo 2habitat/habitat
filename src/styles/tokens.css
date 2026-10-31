@@ -1,0 +1,127 @@
+/* 语义令牌：三套主题（凝脂 / 漂青 / 玄墨）+ 6 档字号 + 3 档圆角 */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --font-serif: 'Songti SC', 'SimSun', Georgia, serif;
+
+  --fs-1: 11px; --fs-2: 12px; --fs-3: 13px; --fs-4: 15px; --fs-5: 18px; --fs-6: 22px; --fs-7: 28px;
+  /* 正文默认按方案 §19 定在 17px 附近，不再跟着 --fs-4(15px) 走 */
+  --fs-body: 17px;
+  /* 阅读行宽三档，方案要求「可调」 */
+  --reading-w: 652px;
+
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  --lh-tight: 1.35; --lh-body: 1.7;
+
+  --sidebar-w: 216px;
+  --topbar-h: 52px;
+  --radius: 8px;
+  --dur: 140ms;
+}
+
+/* 字号档位：界面上可切换。17px 附近为默认，小档仍比原来的 13px 大 */
+:root[data-fs='sm'] { --fs-body: 15px; }
+:root[data-fs='md'] { --fs-body: 17px; }
+:root[data-fs='lg'] { --fs-body: 19px; }
+
+/* 阅读行宽：中文长文 40–46 字/行 */
+:root[data-reading='narrow'] { --reading-w: 520px; }
+:root[data-reading='normal'] { --reading-w: 652px; }
+:root[data-reading='wide'] { --reading-w: 820px; }
+
+/* 圆角档位 */
+:root[data-radius='sharp'] { --radius: 2px; }
+:root[data-radius='soft'] { --radius: 8px; }
+:root[data-radius='round'] { --radius: 14px; }
+
+/* ---------- 凝脂（浅色，默认） ---------- */
+:root,
+:root[data-theme='ningzhi'] {
+  color-scheme: light;
+  --bg: #f7f6f3;
+  --bg-sunken: #efece7;
+  --surface: #fffefb;
+  --surface-2: #faf8f4;
+  --surface-hover: #f2efe9;
+  --border: #e3ddd3;
+  --border-strong: #cdc4b6;
+  --text: #2b2825;
+  --text-2: #5f5952;
+  --text-3: #8d857b;
+  --accent: #8a6a4b;
+  --accent-soft: #f0e6da;
+  --accent-text: #fff;
+  --ok: #4a7c59;
+  --ok-soft: #e6efe8;
+  --warn: #a5761f;
+  --warn-soft: #f8efd9;
+  --danger: #a8443a;
+  --danger-soft: #f7e6e3;
+  --info: #3f6b8f;
+  --info-soft: #e4edf4;
+  --shadow: 0 1px 2px rgba(43, 40, 37, .06), 0 8px 24px rgba(43, 40, 37, .08);
+  --shadow-lg: 0 12px 48px rgba(43, 40, 37, .18);
+  --hl-yellow: #fff3bf; --hl-green: #d7f0dd; --hl-blue: #dbe8f7; --hl-pink: #fbe0e8;
+  --mark: #ffe9a8;
+}
+
+/* ---------- 漂青 ---------- */
+:root[data-theme='piaoqing'] {
+  color-scheme: light;
+  --bg: #f2f7f6;
+  --bg-sunken: #e7efed;
+  --surface: #fdfffe;
+  --surface-2: #f6fbfa;
+  --surface-hover: #eaf3f1;
+  --border: #d9e6e3;
+  --border-strong: #b6cfc9;
+  --text: #1f2e2b;
+  --text-2: #4d5f5b;
+  --text-3: #7b8d89;
+  --accent: #2f7d72;
+  --accent-soft: #dceceb;
+  --accent-text: #fff;
+  --ok: #35785c;
+  --ok-soft: #e0f0e7;
+  --warn: #9a6c17;
+  --warn-soft: #f9efd8;
+  --danger: #a03b34;
+  --danger-soft: #f8e5e2;
+  --info: #2f6480;
+  --info-soft: #e0eef4;
+  --shadow: 0 1px 2px rgba(31, 46, 43, .06), 0 8px 24px rgba(31, 46, 43, .08);
+  --shadow-lg: 0 12px 48px rgba(31, 46, 43, .18);
+  --hl-yellow: #fdf1c4; --hl-green: #d3efe0; --hl-blue: #d7e9f3; --hl-pink: #f9e0e6;
+  --mark: #ffe6a3;
+}
+
+/* ---------- 玄墨 ---------- */
+:root[data-theme='xuanmo'] {
+  color-scheme: dark;
+  --bg: #16171a;
+  --bg-sunken: #101114;
+  --surface: #1e2024;
+  --surface-2: #24272c;
+  --surface-hover: #2b2f35;
+  --border: #33373e;
+  --border-strong: #4a5058;
+  --text: #e7e6e3;
+  --text-2: #b0aea9;
+  --text-3: #82807b;
+  --accent: #c9a37a;
+  --accent-soft: #2f2a22;
+  --accent-text: #1a1815;
+  --ok: #7fb99a;
+  --ok-soft: #1e2b24;
+  --warn: #d3ab5e;
+  --warn-soft: #2e281a;
+  --danger: #d98b80;
+  --danger-soft: #30211f;
+  --info: #8ab4d4;
+  --info-soft: #1d2730;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .36);
+  --shadow-lg: 0 12px 48px rgba(0, 0, 0, .6);
+  --hl-yellow: #5c4f1e; --hl-green: #24503a; --hl-blue: #23405a; --hl-pink: #57293a;
+  --mark: #6b5a20;
+}

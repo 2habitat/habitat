@@ -1,0 +1,331 @@
+/** 调本地服务。冲突与校验失败要带结构化信息回给界面，不能只剩一句 message。 */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public detail?: { conflict?: ConflictPayload; blocked?: BlockedCheck[] },
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+export interface ConflictPayload {
+  id: string;
+  base: { rev: number; content: string };
+  mine: { content: string };
+  theirs: { rev: number; content: string; updatedAt: string; author: string };
+}
+
+export interface BlockedCheck {
+  name: string;
+  label: string;
+  ok: boolean;
+  level: 'error' | 'warn';
+  detail: string;
+}
+
+/* ---------------- 写后失效 ----------------
+ * 文件才是真相，界面只是它的投影。任何写操作成功后都必须让整个查询缓存失效，
+ * 否则界面上看到的还是上一版内容（比如刚采集完，收件箱里却没有）。
+ * 放在这一层统一做，比在几十个调用点各写一次 refresh() 可靠。
+ */
+let queryClient: { invalidateQueries: () => unknown } | null = null;
+
+export function setQueryClient(qc: { invalidateQueries: () => unknown }): void {
+  queryClient = qc;
+}
+
+export function invalidateAll(): void {
+  try {
+    void queryClient?.invalidateQueries();
+  } catch {
+    /* 失效失败不影响这次写入本身 */
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const hasBody = body !== undefined;
+  const res = await fetch(path, {
+    method,
+    // 没有 body 时不要声明 application/json，否则 Fastify 会按空 JSON 体报 400
+    headers: hasBody ? { 'content-type': 'application/json' } : undefined,
+    body: hasBody ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const d = (data ?? {}) as { error?: string; conflict?: ConflictPayload; blocked?: BlockedCheck[] };
+    throw new ApiError(res.status, d.error ?? `请求失败（${res.status}）`, {
+      conflict: d.conflict,
+      blocked: d.blocked,
+    });
+  }
+  if (method !== 'GET') invalidateAll();
+  return data as T;
+}
+
+export const api = {
+  get: <T>(p: string) => request<T>('GET', p),
+  post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
+  /** 裸 body 上传：文件不走 JSON，别把它 base64 化 */
+  put: async <T>(p: string, body: BodyInit, type = 'application/octet-stream'): Promise<T> => {
+    const res = await fetch(p, { method: 'PUT', headers: { 'content-type': type }, body });
+    const text = await res.text();
+    let data: unknown = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = text;
+    }
+    if (!res.ok) {
+      const msg = (data as { error?: string } | null)?.error ?? `请求失败（${res.status}）`;
+      throw new ApiError(res.status, msg);
+    }
+    queryClient?.invalidateQueries();
+    return data as T;
+  },
+};
+
+/* ---------------- 端点 ---------------- */
+
+export interface SpaceInfo {
+  space: { id: string; name: string; root: string; tz: string };
+  stats: {
+    works: number; parts: number; reps: number; notes: number; annotations: number;
+    actions: number; events: number; assets: number; assetBytes: number;
+    unresolved: number; links: number; objects: number;
+  };
+}
+
+export const endpoints = {
+  space: () => api.get<SpaceInfo>('/api/space'),
+  works: () => api.get<{ works: WorkView[] }>('/api/works'),
+  work: (id: string) => api.get<WorkDetail>(`/api/works/${encodeURIComponent(id)}`),
+  rep: (id: string) => api.get<RepContent>(`/api/reps/${encodeURIComponent(id)}/content`),
+  annotations: (rep?: string) => api.get<{ annotations: AnnotationView[] }>(`/api/annotations${rep ? `?rep=${encodeURIComponent(rep)}` : ''}`),
+  inbox: () => api.get<{ notes: NoteView[] }>('/api/inbox'),
+  today: (date?: string) => api.get<TodayView>(`/api/today${date ? `?date=${date}` : ''}`),
+  projects: () => api.get<{ projects: ProjectView[] }>('/api/projects'),
+  flow: () => api.get<FlowView>('/api/flow'),
+  tags: () => api.get<TagsView>('/api/tags'),
+  graph: (limit = 200) => api.get<GraphView>(`/api/graph?limit=${limit}`),
+  search: (q: string, type?: string) => api.get<SearchView>(`/api/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`),
+  journal: (q: Record<string, string> = {}) =>
+    api.get<{ events: JournalEventView[] }>(`/api/journal?${new URLSearchParams(q).toString()}`),
+  changes: () => api.get<{ changesets: ChangeSetView[] }>('/api/changes'),
+  proposals: () => api.get<{ proposals: ProposalView[] }>('/api/proposals'),
+  jobs: () => api.get<{ jobs: JobView[] }>('/api/jobs'),
+  system: () => api.get<SystemView>('/api/system'),
+  manifest: () => api.get<{ manifest: ManifestView }>('/api/agent/manifest'),
+  objects: (type?: string) => api.get<{ objects: Record<string, unknown>[]; total: number }>(`/api/objects${type ? `?type=${type}` : ''}`),
+
+  /** base 必填：客户端（人或 Agent）看到的基准。没有它，外部抢先的改动会被静默覆盖 */
+  propose: (
+    ops: unknown[],
+    reason: string,
+    base?: Record<string, { rev?: number; hash?: string; content?: string }>,
+  ) => api.post<{ changeset: ChangeSetView; checks: BlockedCheck[] }>('/api/changes', { ops, reason, base }),
+  validate: (id: string) => api.post<{ changeset: ChangeSetView; checks: BlockedCheck[] }>(`/api/changes/${id}/validate`),
+  commit: (id: string) => api.post<{ ok: boolean; changeset: ChangeSetView; events: JournalEventView[] }>(`/api/changes/${id}/commit`),
+  revert: (id: string) => api.post<{ ok: boolean }>(`/api/changes/${id}/revert`),
+
+  capture: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/capture', b),
+  derive: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/derive', b),
+  annotate: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/annotate', b),
+  addAction: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/actions', b),
+  addEvent: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/events', b),
+  cursor: (repId: string, pct: number) => api.post<{ ok: boolean; cursor: { current: number; furthest: number } }>('/api/cursor', { repId, pct }),
+  review: (id: string, note?: string) => api.post<{ ok: boolean }>('/api/review', { id, note }),
+  journalLog: (b: unknown) => api.post<{ ok: boolean }>('/api/journal', b),
+  claim: (id: string, actor = 'human') => api.post<{ ok: boolean }>(`/api/journal/${id}/claim`, { actor }),
+  proposeAi: (b: unknown) => api.post<{ ok: boolean; proposal: ProposalView }>('/api/proposals', b),
+  applyProposal: (id: string) => api.post<{ ok: boolean }>(`/api/proposals/${id}/apply`),
+  reconcile: () => api.post<{ ok: boolean; report: ReconcileView }>('/api/agent/reconcile'),
+  reindex: () => api.post<{ ok: boolean }>('/api/system/reindex'),
+
+  createJob: (b: unknown) => api.post<{ ok: boolean; job: Record<string, unknown> }>('/api/jobs', b),
+  advanceJob: (id: string, approve?: boolean) => api.post<{ ok: boolean; job: JobView }>(`/api/jobs/${id}/advance`, { approve }),
+  failJob: (id: string, reason: string) => api.post<{ ok: boolean; job: JobView; permanent: boolean }>(`/api/jobs/${id}/fail`, { reason }),
+  rules: () => api.get<{ rules: RuleView[] }>('/api/rules'),
+  runRules: (dryRun = false) => api.post<{ ok: boolean; report: RuleRunView }>('/api/rules/run', { dryRun }),
+  actions: (includeDone = false) => api.get<{ actions: ActionView[]; total: number }>(`/api/actions${includeDone ? '?includeDone=1' : ''}`),
+  uploadAsset: (file: File, dir?: 'originals') =>
+    api.put<{ ok: boolean; path: string; url: string; markdown: string; bytes: number; deduped: boolean }>(
+      `/api/assets?name=${encodeURIComponent(file.name)}${dir ? `&dir=assets/${dir}` : ''}`,
+      file,
+      file.type || 'application/octet-stream',
+    ),
+  renew: (id: string) => api.get<{ ok: boolean; pack: { title: string; idleDays: number; candidates: { id: string; title: string; shared: string[]; newerBy: number; hedged: boolean }[] }; text: string }>(`/api/renew/${id}`),
+  /** 翻新复核（和「复盘」的 review 不是一回事：那个是记一次回顾，这个是给知识打间隔） */
+  reviewNote: (id: string, ok: boolean) => api.post<{ ok: boolean; nextIn: number; rec: { streak: number; step: number } }>(`/api/review/${id}`, { ok }),
+  brief: () => api.get<{ data: BriefView; brief: string }>('/api/maintenance/brief'),
+  tidy: (apply = false) => api.post<{ ok: boolean; report: { dryRun: boolean; archived: number; candidates: number; brief: string; error?: string } }>('/api/maintenance/tidy', { apply }),
+  notifyStatus: () => api.get<NotifyStatusView>('/api/notify/status'),
+  saveNotifyConfig: (b: Partial<{ host: string; port: number; secure: boolean; user: string; pass: string; to: string; fromName: string; allowFrom: string[] }>) =>
+    api.put<{ ok: boolean } & NotifyStatusView>('/api/notify/config', new Blob([JSON.stringify(b)], { type: 'application/json' }), 'application/json'),
+  checkMail: (dryRun = true) => api.post<{ ok: boolean; report: { fetched: number; captured: { subject: string; from: string; skipped?: string }[]; skipped: { subject: string; skipped?: string }[]; error?: string } }>('/api/inbox/mail', { dryRun }),
+  testNotify: () => api.post<{ ok: boolean; messageId?: string; error?: string }>('/api/notify/test'),
+  runNotify: (dryRun = true) => api.post<{ ok: boolean; report: { sent: { kind: string; title: string }[]; skipped: string[]; error?: string } }>('/api/notify/run', { dryRun }),
+  unresolvedLinks: () => api.get<{ items: UnresolvedLinkView[] }>('/api/links/unresolved'),
+  candidates: () => api.get<{ candidates: WorkCandidateView[] }>('/api/candidates/works'),
+  groupWork: (dir: string, title: string) => api.post<{ ok: boolean; slug: string }>('/api/works/group', { dir, title }),
+  notifications: () => api.get<{ notices: NoticeView[]; unread: number }>('/api/notifications'),
+  readNotifications: (id?: string) => api.post<{ ok: boolean; marked: number }>('/api/notifications/read', { id }),
+  createRule: (b: unknown) => api.post<{ ok: boolean; rule: RuleView }>('/api/rules', b),
+  toggleRule: (id: string) => api.post<{ ok: boolean }>(`/api/rules/${id}/toggle`),
+};
+
+/* ---------------- 视图类型 ---------------- */
+
+export interface WorkView {
+  work: { id: string; title: string; kind: string; desc?: string; slug: string; updatedAt: string };
+  parts: { id: string; title: string; order: number; supplemental?: boolean }[];
+  reps: { id: string; partId: string; carrier: string; path: string; locked: boolean; bytes: number }[];
+  originals: number; annotations: number; derived: number; readPct: number;
+  gates: { key: string; pass: boolean; detail: string }[];
+  stage: string | null; next: { key: string; text: string } | null; locked: boolean;
+}
+export interface WorkDetail extends Omit<WorkView, 'parts' | 'derived'> {
+  parts: ({ part: WorkView['parts'][number]; reps: WorkView['reps']; annotations: number })[];
+  derived: NoteView[];
+}
+export interface NoteView {
+  id: string; type: string; title: string; body?: string; status: string; kind: string;
+  srcIds: string[]; tags?: string[]; updatedAt: string; path?: string;
+}
+export interface RepContent {
+  rep: { id: string; carrier: string; path: string; locked: boolean; partId: string; workId: string; rev?: number };
+  content: string;
+  /** 打开时这份内容的哈希：保存时当作基准回传，服务端才知道有没有人抢先改过 */
+  hash: string;
+  locked: boolean;
+  cursor: { repId: string; current: number; furthest: number };
+}
+export interface AnnotationView {
+  id: string; targetRepId: string; quote: string; note?: string; color: string;
+  locator: { from: number; to: number; prefix?: string; suffix?: string };
+  author: string; createdAt: string;
+}
+export interface TodayView {
+  actions: (ActionView & {})[];
+  events: EventView[];
+  overdue: ActionView[];
+  reading: { rep: { id: string; carrier: string; path: string }; title: string; pct: number }[];
+}
+export interface ActionView {
+  id: string; text: string; due?: string; flow: string; state: string; projectId?: string; rev: number;
+}
+export interface EventView { id: string; title: string; start: string; end: string; projectId?: string }
+export interface ProjectView {
+  id: string; title: string; state: string; desc?: string;
+  actions: ActionView[]; done: number;
+}
+export interface FlowView {
+  cards: { id: string; kind: string; title: string; path?: string; readPct: number; derived: number; gates: { key: string; pass: boolean; detail: string }[]; stage: string | null; next: { key: string; text: string } | null }[];
+  byStage: Record<string, FlowView['cards']>;
+  stuck: FlowView['cards'];
+}
+export interface TagsView { tags: { tag: string; ids: string[] }[]; facets: { tags: { tag: string; n: number }[]; types: { type: string; n: number }[] } }
+export interface GraphView { nodes: { id: string; type: string; title: string }[]; edges: { source: string; target: string }[] }
+export interface SearchView { hits: { id: string; type: string; title: string; path: string; snippet: string; score: number }[]; facets: TagsView['facets'] }
+export interface JournalEventView {
+  id: string; at: string; actor: string; op: string; phase: string; target: string;
+  summary: string; payload?: Record<string, unknown>; claimedBy?: string;
+}
+export interface ChangeSetView {
+  id: string; state: string; reason?: string; author: string; createdAt: string; committedAt?: string;
+  ops: { t: string; id?: string; patch?: Record<string, unknown>; body?: string; obj?: Record<string, unknown> }[];
+  checks?: BlockedCheck[];
+  snapshot?: Record<string, { baseRev: number; base: string; mine: string; hash: string }>;
+  conflict?: ConflictPayload;
+  baseRevisions: Record<string, number>;
+}
+export interface ProposalView {
+  id: string; title: string; kind: string; rationale?: string; scope?: string; budgetCny?: number;
+  risk?: string; state: string; author: string; changesetId?: string; evidence?: string[]; checks?: BlockedCheck[];
+}
+export interface JobView {
+  id: string; name: string; trigger: string; state: string; checkpoint: string;
+  steps: { name: string; state: string }[]; waitingReason?: string; idempotencyKey?: string; updatedAt?: string;
+  attempts?: number; lastError?: string; nextTryAt?: string;
+}
+export interface RuleView {
+  kind?: string; threshold?: number; id: string; name: string; when: string; do: string; limit: number; enabled: boolean }
+export interface SystemView {
+  space: { id: string; name: string; root: string; tz: string };
+  stats: SpaceInfo['stats'];
+  storage: {
+    adapter: string; capabilities: Record<string, boolean>; root: string; wpsNotice: string;
+    assets: { path: string; bytes: number; kind: string }[]; assetBytes: number;
+  };
+  budget: { dailyProposalLimit: number; usedToday: number };
+  health: { unresolvedLinks: number; links: number; resolveRate: number; indexDocs: number };
+}
+export interface ManifestView {
+  space: string; generatedAt: string;
+  capabilities: { id: string; name: string; human: string; agent: string; writes: string; event: string; command: string; mutating: boolean }[];
+}
+export interface ActionView {
+  id: string; text: string; state: string; flow: string;
+  due?: string; doneAt?: string; pri?: string; projectId?: string;
+}
+
+export interface BriefView {
+  at: string;
+  today: { id: string; text: string }[];
+  overdue: { id: string; text: string; due?: string }[];
+  upcoming: { id: string; text: string; due?: string }[];
+  events: { id: string; title: string; start: string }[];
+  reading: { repId: string; title: string; pct: number; staleDays: number }[];
+  inbox: { id: string; title: string; days: number }[];
+  counts: { links: number; brokenLinks: number; notes: number; parts: number; works: number; doneOld: number };
+  archiveCandidates: { id: string; text: string; doneAt?: string }[];
+  stuck: { state: string; stateName: string; n: number }[];
+  refresh: { id: string; title: string; idleDays: number; why: string }[];
+  byVitality: { vitality: string; name: string; n: number }[];
+}
+
+export interface NotifyStatusView {
+  configured: boolean;
+  /** 发件邮箱 */
+  user?: string | null;
+  /** 收件邮箱（可逗号分隔多个） */
+  to?: string | null;
+  host?: string | null;
+  port?: number | null;
+  secure?: boolean | null;
+  fromName?: string | null;
+  /** 投递白名单；空数组 = 只认自己的发件地址 */
+  allowFrom?: string[];
+  missing?: string[];
+  configPath: string;
+  env?: { HABITAT_SMTP_HOST: boolean };
+}
+
+export interface UnresolvedLinkView { target: string; refs: { id: string; path: string }[] }
+
+export interface WorkCandidateView { dir: string; slug: string; chapters: number; title: string }
+
+export interface NoticeView {
+  id: string; at: string; level: 'info' | 'warn' | 'danger';
+  title: string; body?: string; href?: string; ruleId?: string; read: boolean;
+}
+
+export interface RuleRunView {
+  at: string; rules: number; evaluated: number;
+  fired: { rule: string; title: string }[];
+  skipped: string[];
+}
+
+export interface ReconcileView {
+  at: string; checked: number; baseline: boolean; added: string[]; removed: string[];
+  changed: { path: string; from: string; to: string }[];
+  unsigned: { path: string; from: string; to: string }[];
+  signed: { path: string; event: string }[];
+}

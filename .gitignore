@@ -1,0 +1,28 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 测试产物
+.e2e-space/
+test-results/
+playwright-report/
+.shots/
+
+# 运行时状态：索引、事件、使用统计都从文件重建，不进仓库
+.abi-backup/
+space/.habitat/state/
+*.sqlite
+*.sqlite-journal
+
+# 本地配置与凭据（**永远不要提交**）
+.env
+.env.*
+!.env.example
+mail.json
+remote.json
+kb_token*
+
+# 系统垃圾
+.DS_Store
+Thumbs.db

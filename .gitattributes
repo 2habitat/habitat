@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# 二进制：别做换行转换，否则校验和会变
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary
+*.node binary
+package-lock.json -diff linguist-generated

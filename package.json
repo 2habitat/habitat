@@ -1,0 +1,77 @@
+{
+  "name": "habitat",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0 <25.0.0"
+  },
+  "description": "以文件为事实源的个人知识库与工作台：Markdown 可读可迁移，事件流可审计，SQLite 只做索引。自托管，可接任意 Agent harness。",
+  "bin": {
+    "habitat": "./scripts/habitat.mjs"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test:unit && npm run test:e2e",
+    "reindex": "tsx server/cli.ts reindex",
+    "agent": "tsx server/cli.ts agent",
+    "seed": "tsx scripts/seed-dev.ts",
+    "seed:e2e": "tsx scripts/seed-e2e.ts",
+    "start": "tsx server/index.ts",
+    "serve": "tsx scripts/serve.ts",
+    "doctor": "node scripts/doctor.mjs",
+    "setup": "npm run seed -- ./space"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@fastify/static": "^8.3.0",
+    "@tanstack/react-query": "^5.62.7",
+    "better-sqlite3": "^11.7.0",
+    "fastify": "^5.2.1",
+    "fastify-plugin": "^5.1.0",
+    "imapflow": "^2.10.0",
+    "mailparser": "^3.14.1",
+    "markdown-it": "^14.1.0",
+    "nodemailer": "^10.3.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "yaml": "^2.9.1",
+    "zod": "^3.24.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  },
+  "license": "MIT",
+  "keywords": [
+    "knowledge-base",
+    "pkm",
+    "markdown",
+    "sqlite",
+    "local-first",
+    "agent",
+    "mcp",
+    "self-hosted"
+  ],
+  "author": "",
+  "repository": null
+}
