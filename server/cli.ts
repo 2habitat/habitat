@@ -65,7 +65,7 @@ const ROOT = process.env.HABITAT_SPACE ?? arg('root') ?? path.resolve('space');
 function usage(): string {
   return `habitat —— 知识库与个人工作台
 
-  habitat status                          空间概览
+  habitat status [--json]                 空间概览（--json 供脚本对比）
   habitat reindex                         重建 SQLite 索引
   habitat search <关键词> [--type=note]    检索
   habitat read <rep-id>                   读正文
@@ -118,6 +118,11 @@ async function main(): Promise<number> {
   switch (cmd) {
     case 'status': {
       const s = hab.stats();
+      // --json 给脚本用（升级前后对比对象数，防止重构把扫描改坏）
+      if (flag('json')) {
+        console.log(JSON.stringify({ space: hab.store.space.name, root: hab.store.root, ...s }));
+        return 0;
+      }
       console.log(`空间：${hab.store.space.name}（${hab.store.root}）`);
       console.log(`作品 ${s.works} · 章节 ${s.parts} · 载体 ${s.reps} · 笔记 ${s.notes} · 批注 ${s.annotations} · 任务 ${s.actions} · 日程 ${s.events}`);
       console.log(`链接 ${s.links} 条，未解析 ${s.unresolved} 条（解析率 ${s.links ? ((1 - s.unresolved / s.links) * 100).toFixed(1) : '100.0'}%）`);
