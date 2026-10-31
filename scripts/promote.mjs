@@ -120,8 +120,10 @@ console.log('   干净');
 
 step(2, '解析目标版本');
 sh('git fetch --tags --quiet');
-// 解引用到 commit：annotated tag 的 sha 是 tag 对象，不是提交
-const targetHead = out(`git rev-parse ${ref}^{commit}`);
+// 解引用到 commit：annotated tag 的 sha 是 tag 对象，不是提交。
+// 用 rev-list 而不是 rev-parse <ref>^{commit}——Windows 上 shell:true 走 cmd.exe，
+// 会把 `^` 当转义符吃掉，变成 `<ref>{commit}` 然后报 ambiguous argument。
+const targetHead = out(`git rev-list -n 1 ${ref}`);
 const targetShort = targetHead.slice(0, 7);
 if (targetHead === prevHead) {
   console.log(`   已经在 ${targetShort}，无需升级`);
