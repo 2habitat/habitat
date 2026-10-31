@@ -9,6 +9,9 @@ test-results/
 playwright-report/
 .shots/
 
+# 本地空间：那是你的数据，不进仓库
+space/
+
 # 运行时状态：索引、事件、使用统计都从文件重建，不进仓库
 .abi-backup/
 space/.habitat/state/
