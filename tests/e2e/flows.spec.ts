@@ -852,8 +852,8 @@ test('文件：能看目录、预览内容；上传→改名→归档是一条�
   await expect(row).toHaveCount(1);
   await expect(row).toContainText('未入库');
 
-  // 点开预览
-  await row.locator('button').first().click();
+  // 点开预览（文件名是纯文本 role=button，不是 <button>）
+  await row.locator('span[role="button"]').first().click();
   await page.waitForTimeout(900);
   await expect(page.locator('[data-testid="fs-preview"]')).toContainText('第二行');
 

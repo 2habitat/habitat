@@ -211,6 +211,7 @@ export function FilesPage() {
                   data-testid="fs-file"
                 >
                   <span style={{ width: 18, color: 'var(--muted)' }}>{iconOf(f.kind)}</span>
+                  {/* 文件名用纯文本：套 .btn 会带边框，看起来像可编辑的输入框 */}
                   {renaming?.path === f.path ? (
                     <input
                       className="input"
@@ -224,13 +225,16 @@ export function FilesPage() {
                       style={{ flex: 1 }}
                     />
                   ) : (
-                    <button
-                      className="btn btn-sm"
-                      style={{ flex: 1, justifyContent: 'flex-start', textAlign: 'left' }}
+                    <span
+                      className="ellipsis"
+                      role="button"
+                      tabIndex={0}
+                      style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
                       onClick={() => setSelected(selected === f.path ? '' : f.path)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') setSelected(selected === f.path ? '' : f.path); }}
                     >
-                      <span className="ellipsis">{f.name}</span>
-                    </button>
+                      {f.name}
+                    </span>
                   )}
 
                   {f.locked && <Chip tone="warn">原件</Chip>}
@@ -246,6 +250,7 @@ export function FilesPage() {
 
                   <button
                     className="btn btn-sm"
+                    style={{ border: 'none', background: 'transparent', padding: '2px 6px' }}
                     onClick={() => setRenaming({ path: f.path, value: f.name })}
                     data-testid="fs-rename"
                   >
@@ -253,6 +258,7 @@ export function FilesPage() {
                   </button>
                   <button
                     className="btn btn-sm"
+                    style={{ border: 'none', background: 'transparent', padding: '2px 6px' }}
                     onClick={() => {
                       if (!window.confirm(`归档「${f.name}」？\n\n文件不会被删除，会移到 archive/fs/ 下，之后还能找回来。`)) return;
                       void run(`arch:${f.path}`, () => endpoints.fsArchive([f.path]), '已归档');
