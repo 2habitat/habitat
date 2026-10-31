@@ -60,10 +60,10 @@ npm install
 # 造一个空空间（也可以指向你已有的 Markdown 目录）
 npm run setup
 
-npm run dev          # 前端 5173，后端 8787
+npm run dev          # 前端 5178，后端 8787
 ```
 
-打开 http://127.0.0.1:5173 。第一次跑会把 `./space` 建成一个最小可用的空间。
+打开 http://127.0.0.1:5178 。`npm run setup` 会在 `./space` 建一个最小可用的示例空间。
 
 ```bash
 npx habitat status    # 空间概览
