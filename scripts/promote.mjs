@@ -120,13 +120,20 @@ console.log('   干净');
 
 step(2, '解析目标版本');
 sh('git fetch --tags --quiet');
-const targetHead = out(`git rev-parse ${ref}`);
+// 解引用到 commit：annotated tag 的 sha 是 tag 对象，不是提交
+const targetHead = out(`git rev-parse ${ref}^{commit}`);
 const targetShort = targetHead.slice(0, 7);
 if (targetHead === prevHead) {
   console.log(`   已经在 ${targetShort}，无需升级`);
   process.exit(0);
 }
 console.log(`   ${prevShort} → ${targetShort}`);
+
+// 版本号对不上会让 /healthz 报的 version 和 tag 不一致，上线后排查时很容易看错
+const pkgVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+if (/^v\d+\.\d+\.\d+$/.test(ref) && `v${pkgVersion}` !== ref) {
+  console.log(`   ⚠ package.json 版本是 ${pkgVersion}，与标签 ${ref} 不一致（/healthz 会报旧版本号）`);
+}
 
 step(3, '升级前快照');
 const before = snapshot();
