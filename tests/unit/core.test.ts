@@ -911,3 +911,59 @@ describe('翻新', () => {
     expect(bad.rec.lastOk).toBeTruthy(); // 上次确认时间要保住，不是清零
   });
 });
+
+/* ---------------- V. 文件浏览与受管操作 ---------------- */
+
+describe('文件浏览', () => {
+  it('列目录：默认藏起系统目录，越界路径直接拒绝', async () => {
+    const { listDir } = await import('../../server/core/fs.ts');
+    const root = await listDir(hab, '');
+    const names = root.dirs.map((d) => d.name);
+    expect(names).toContain('knowledge');
+    expect(names).toContain('work');
+    expect(names).not.toContain('.habitat');
+
+    await expect(listDir(hab, '../..')).rejects.toThrow(/越界/);
+  });
+
+  it('已入库且被引用的笔记：改名先拦下并报断链数，force 后才执行', async () => {
+    const { listDir, moveFile } = await import('../../server/core/fs.ts');
+    // 找一个有入链的笔记文件
+    const notes = await listDir(hab, 'knowledge/notes');
+    const target = notes.files.find((f) => f.indexed && (f.inbound ?? 0) > 0);
+    expect(target, '夹具里应该有带入链的笔记').toBeTruthy();
+
+    const next = target!.path.replace(/\.md$/, '-renamed.md');
+    const blocked = await moveFile(hab, target!.path, next, {});
+    expect(blocked.ok).toBe(false);
+    expect(blocked.brokenLinks).toBeGreaterThan(0);
+    expect(blocked.needConfirm).toContain('链接');
+
+    // 文件没有被动过
+    const after = await listDir(hab, 'knowledge/notes');
+    expect(after.files.some((f) => f.path === target!.path)).toBe(true);
+
+    const forced = await moveFile(hab, target!.path, next, { force: true });
+    expect(forced.ok).toBe(true);
+    const moved = await listDir(hab, 'knowledge/notes');
+    expect(moved.files.some((f) => f.path === next)).toBe(true);
+    expect(moved.files.some((f) => f.path === target!.path)).toBe(false);
+  });
+
+  it('归档是移动不是删除：落进 archive/fs/<日期>/，原位置不再有', async () => {
+    const { listDir, archiveFiles } = await import('../../server/core/fs.ts');
+    const first = (await listDir(hab, 'knowledge/notes')).files[0];
+    expect(first).toBeTruthy();
+
+    const r = await archiveFiles(hab, [first.path]);
+    expect(r.moved).toHaveLength(1);
+    expect(r.moved[0].to).toMatch(/^archive\/fs\/\d{4}-\d{2}-\d{2}\//);
+
+    const after = await listDir(hab, 'knowledge/notes');
+    expect(after.files.some((f) => f.path === first.path)).toBe(false);
+
+    // 归档后的文件还在，能列出来
+    const archived = await listDir(hab, r.moved[0].to.slice(0, r.moved[0].to.lastIndexOf('/')));
+    expect(archived.files.some((f) => f.path === r.moved[0].to)).toBe(true);
+  });
+});

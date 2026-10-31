@@ -14,6 +14,7 @@ import { EditorPage } from '../domains/editing/Editor.tsx';
 import { SearchPage, TagsPage, CollectionsPage, GraphPage } from '../domains/connect/pages.tsx';
 import { AssistantPage, ChangesPage, JobsPage, AutomationPage } from '../domains/ai/pages.tsx';
 import { ChannelsPage, StoragePage, AgentPage, BudgetPage, HealthPage } from '../domains/system/pages.tsx';
+import { FilesPage } from '../domains/system/FilesPage.tsx';
 
 export function App() {
   const loc = useLocation();
@@ -201,6 +202,7 @@ function Page({ id, params }: { id: ReturnType<typeof useLocation>['id']; params
     case 'storage': return <StoragePage />;
     case 'agent': return <AgentPage />;
     case 'budget': return <BudgetPage />;
+    case 'files': return <FilesPage />;
     case 'channels': return <ChannelsPage />;
     case 'health': return <HealthPage />;
 

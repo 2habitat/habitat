@@ -78,7 +78,7 @@ npx habitat search "关键词"
 
 | 入口 | 适合 |
 |---|---|
-| **网页** https://你的域名 | 读、写、看板、阅读器、变更对比 |
+| **网页** https://你的域名 | 读、写、看板、阅读器、变更对比、文件浏览 |
 | **CLI** `habitat …` | 脚本、定时任务、任意 Agent harness |
 | **MCP** `habitat mcp` | Claude Desktop / Cursor / 任何支持 MCP 的客户端 |
 

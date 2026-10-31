@@ -173,6 +173,9 @@ export async function buildServer(opts: ServerOpts | string = {}) {
   for (const t of ['application/octet-stream', 'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf']) {
     app.addContentTypeParser(t, { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
   }
+  // 兜底：文件上传的类型是浏览器说了算的（text/plain、application/zip…），
+  // 不可能枚举完。JSON 有内建解析器会先命中，这里只接住其余的。
+  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
 
   await app.register(api, { root });
 

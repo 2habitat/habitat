@@ -24,6 +24,7 @@ import { collectBrief, renderBrief, runTidy } from '../core/tidy.ts';
 import { lifeSnapshot, lifeViewOf } from '../core/lifecycle.ts';
 import { touch, flush } from '../core/usage.ts';
 import { renewPack, renderRenew, markReviewed } from '../core/renew.ts';
+import { listDir, preview, moveFile, makeDir, archiveFiles } from '../core/fs.ts';
 import { loadRules, saveRules, normalizeRule, runRules } from '../core/rules.ts';
 
 export interface ApiOpts {
@@ -80,6 +81,17 @@ export const api = fp<ApiOpts>(async (app: FastifyInstance, opts: ApiOpts) => {
 
   /* ---------------- 读 ---------------- */
 
+/**
+ * 把请求体归一化成 Buffer。
+ * Fastify 对 text/* 有自己的解析器会给 string，二进制类型才给 Buffer——
+ * 上传口两边都可能收到，不归一化就会出现"传文本文件报 body 为空"。
+ */
+function asBuffer(body: unknown): Buffer | null {
+  if (Buffer.isBuffer(body)) return body;
+  if (typeof body === 'string') return Buffer.from(body, 'utf8');
+  return null;
+}
+
   app.get('/api/space', async () => ({
     space: hab.store.space,
     stats: hab.stats(),
@@ -118,6 +130,91 @@ export const api = fp<ApiOpts>(async (app: FastifyInstance, opts: ApiOpts) => {
     return { ...v, parts, derived: hab.derivedOf(id) };
   });
 
+  /* ---------------- 文件浏览（受管） ---------------- */
+
+  /**
+   * 目录列表。
+   * 刻意不做成"资源管理器"：写入仍然要走变更集，删除改成归档。
+   */
+  app.get('/api/fs', async (req, reply) => {
+    const q = req.query as { path?: string; hidden?: string };
+    try {
+      return await listDir(hab, String(q.path ?? ''), { showHidden: q.hidden === '1' });
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  app.get('/api/fs/file', async (req, reply) => {
+    const q = req.query as { path?: string };
+    try {
+      return await preview(hab, String(q.path ?? ''));
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/fs/mkdir', async (req, reply) => {
+    const b = (req.body ?? {}) as { path?: string };
+    try {
+      return await makeDir(hab, String(b.path ?? ''), actorOf(b as never, req.headers));
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  /** 改名 / 移动。已入库且被引用的文件需要 force——先让人看见会断几条链 */
+  app.post('/api/fs/move', async (req, reply) => {
+    const b = (req.body ?? {}) as { from?: string; to?: string; force?: boolean };
+    try {
+      return await moveFile(hab, String(b.from ?? ''), String(b.to ?? ''), {
+        force: b.force === true,
+        actor: actorOf(b as never, req.headers),
+      });
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  /** 归档（不是删除）：移到 archive/fs/<日期>/ 下 */
+  app.post('/api/fs/archive', async (req, reply) => {
+    const b = (req.body ?? {}) as { paths?: string[] };
+    try {
+      return await archiveFiles(hab, Array.isArray(b.paths) ? b.paths : [], actorOf(b as never, req.headers));
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  /** 上传到任意目录（浏览页用；assets 之外也允许） */
+  app.put('/api/fs/upload', async (req, reply) => {
+    const q = req.query as { dir?: string; name?: string };
+    const buf = asBuffer(req.body);
+    if (!buf || buf.byteLength === 0) {
+      return reply.code(400).send({ error: 'body 要是文件内容' });
+    }
+    const dir = String(q.dir ?? '').replace(/^\/+|\/+$/g, '');
+    const name = path.basename(String(q.name ?? '')).replace(/[\/]/g, '_') || `file-${Date.now()}`;
+    const rel = dir ? `${dir}/${name}` : name;
+    try {
+      const abs = safeJoin(hab.store.root, rel);
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, buf);
+      await hab.journal.add({
+        actor: actorOf(req.body as never, req.headers),
+        op: 'import',
+        phase: 'done',
+        target: rel,
+        summary: `上传文件：${rel}（${(buf.byteLength / 1024).toFixed(0)} KB）`,
+        payload: { bytes: buf.byteLength },
+      });
+      await hab.rescan();
+      return reply.code(201).send({ ok: true, path: rel, bytes: buf.byteLength });
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
   /* ---------------- 附件上传 ---------------- */
 
   /**
@@ -128,8 +225,8 @@ export const api = fp<ApiOpts>(async (app: FastifyInstance, opts: ApiOpts) => {
    */
   app.put('/api/assets', async (req, reply) => {
     const q = req.query as { name?: string; dir?: string };
-    const buf = req.body as unknown;
-    if (!Buffer.isBuffer(buf) || buf.byteLength === 0) {
+    const buf = asBuffer(req.body);
+    if (!buf || buf.byteLength === 0) {
       return reply.code(400).send({ error: 'body 要是文件内容（Content-Type: application/octet-stream）' });
     }
     const maxMb = Number(process.env.HABITAT_MAX_UPLOAD_MB ?? 64);

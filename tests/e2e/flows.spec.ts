@@ -827,3 +827,58 @@ test('翻新：证据包能取到，复核后间隔往后推', async ({ page }) 
   expect(r2.nextIn).toBe(3);
   expect(r2.rec.streak).toBe(2);
 });
+
+/* ---------------- 24. 文件浏览 ---------------- */
+
+test('文件：能看目录、预览内容；上传→改名→归档是一条完整链路', async ({ page }) => {
+  page.on('dialog', (d) => void d.accept());
+  await goto(page, 'files');
+
+  // 目录列表：认识知识/工作目录
+  await expect(page.locator('[data-testid="fs-crumbs"]')).toContainText('根');
+  const dirs = page.locator('[data-testid="fs-dir"]');
+  await expect(dirs.filter({ hasText: 'knowledge' })).toHaveCount(1);
+  await expect(dirs.filter({ hasText: 'work' })).toHaveCount(1);
+
+  // 上传一个未入库文件
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: 'e2e-upload.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('这是通过文件页上传的内容。\n第二行。'),
+  });
+  await page.waitForTimeout(1600);
+
+  const row = page.locator('[data-testid="fs-file"]').filter({ hasText: 'e2e-upload.txt' });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText('未入库');
+
+  // 点开预览
+  await row.locator('button').first().click();
+  await page.waitForTimeout(900);
+  await expect(page.locator('[data-testid="fs-preview"]')).toContainText('第二行');
+
+  // 改名（未入库文件不会弹断链确认）
+  await row.locator('[data-testid="fs-rename"]').click();
+  await page.waitForTimeout(300);
+  const renameInput = page.locator('[data-testid="fs-file"] input.input').first();
+  await renameInput.fill('e2e-renamed.txt');
+  await page.locator('[data-testid="fs-rename-confirm"]').click();
+  await page.waitForTimeout(1600);
+  await expect(page.locator('[data-testid="fs-file"]').filter({ hasText: 'e2e-renamed.txt' })).toHaveCount(1);
+
+  // 归档 → 从当前目录消失（文件去了 archive/fs/，没被删）
+  await page
+    .locator('[data-testid="fs-file"]')
+    .filter({ hasText: 'e2e-renamed.txt' })
+    .locator('[data-testid="fs-archive"]')
+    .click();
+  await page.waitForTimeout(1800);
+  await expect(page.locator('[data-testid="fs-file"]').filter({ hasText: 'e2e-renamed.txt' })).toHaveCount(0);
+
+  // 归档目录里能找到它
+  const archived = await page.evaluate(async () => {
+    const r = await fetch('/api/fs?path=archive/fs');
+    return (await r.json()) as { dirs: { name: string }[] };
+  });
+  expect(archived.dirs.length).toBeGreaterThan(0);
+});

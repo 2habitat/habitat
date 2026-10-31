@@ -164,6 +164,27 @@ export const endpoints = {
   renew: (id: string) => api.get<{ ok: boolean; pack: { title: string; idleDays: number; candidates: { id: string; title: string; shared: string[]; newerBy: number; hedged: boolean }[] }; text: string }>(`/api/renew/${id}`),
   /** 翻新复核（和「复盘」的 review 不是一回事：那个是记一次回顾，这个是给知识打间隔） */
   reviewNote: (id: string, ok: boolean) => api.post<{ ok: boolean; nextIn: number; rec: { streak: number; step: number } }>(`/api/review/${id}`, { ok }),
+  fsList: (path: string, hidden = false) =>
+    api.get<{
+      path: string;
+      crumbs: { name: string; path: string }[];
+      dirs: FsEntry[];
+      files: FsEntry[];
+      totals: { files: number; dirs: number; bytes: number; unindexed: number };
+      hiddenSkipped: number;
+    }>(`/api/fs?path=${encodeURIComponent(path)}${hidden ? '&hidden=1' : ''}`),
+  fsFile: (path: string) =>
+    api.get<{ path: string; kind: string; bytes: number; text?: string; truncated?: boolean; url?: string; objectId?: string }>(
+      `/api/fs/file?path=${encodeURIComponent(path)}`,
+    ),
+  fsMkdir: (path: string) => api.post<{ ok: boolean; path: string }>('/api/fs/mkdir', { path }),
+  fsMove: (from: string, to: string, force = false) =>
+    api.post<{ ok: boolean; from: string; to: string; brokenLinks: number; needConfirm?: string; error?: string }>('/api/fs/move', {
+      from,
+      to,
+      force,
+    }),
+  fsArchive: (paths: string[]) => api.post<{ moved: { from: string; to: string }[] }>('/api/fs/archive', { paths }),
   brief: () => api.get<{ data: BriefView; brief: string }>('/api/maintenance/brief'),
   tidy: (apply = false) => api.post<{ ok: boolean; report: { dryRun: boolean; archived: number; candidates: number; brief: string; error?: string } }>('/api/maintenance/tidy', { apply }),
   notifyStatus: () => api.get<NotifyStatusView>('/api/notify/status'),
@@ -274,6 +295,19 @@ export interface ManifestView {
 export interface ActionView {
   id: string; text: string; state: string; flow: string;
   due?: string; doneAt?: string; pri?: string; projectId?: string;
+}
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  kind: string;
+  bytes: number;
+  mtime: string;
+  indexed: boolean;
+  objectType?: string;
+  objectId?: string;
+  locked?: boolean;
+  inbound?: number;
 }
 
 export interface BriefView {

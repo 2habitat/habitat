@@ -38,6 +38,7 @@ server/core/          核心，按职责分文件
   mailer.ts           SMTP
   inbox-mail.ts       IMAP 收信 → 收件箱
   assets.ts           附件入库
+  fs.ts               文件浏览与受管操作（改名前算断链、归档代替删除）
   reconcile.ts        对账：外部改动 → external_edit
   export.ts / sync.ts 导出与增量同步
 

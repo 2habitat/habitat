@@ -9,7 +9,7 @@ export type RouteId =
   | 'shelf' | 'continue' | 'compose' | 'reader' | 'editor'
   | 'search' | 'tags' | 'collections' | 'graph'
   | 'assistant' | 'changes' | 'jobs' | 'automation'
-  | 'storage' | 'agent' | 'budget' | 'channels' | 'health';
+  | 'storage' | 'agent' | 'budget' | 'files' | 'channels' | 'health';
 
 export const ROUTES: { id: RouteId; path: string; group: string; title: string; icon: string }[] = [
   { id: 'today', path: '/today', group: '行动', title: '今天', icon: '☀' },
@@ -38,6 +38,7 @@ export const ROUTES: { id: RouteId; path: string; group: string; title: string; 
   { id: 'storage', path: '/storage', group: '系统', title: '空间与存储', icon: '▣' },
   { id: 'agent', path: '/agent', group: '系统', title: 'Agent 接入', icon: '⌸' },
   { id: 'budget', path: '/budget', group: '系统', title: '权限与预算', icon: '⛨' },
+  { id: 'files', path: '/files', group: '系统', title: '文件', icon: '▤' },
   { id: 'channels', path: '/channels', group: '系统', title: '通知渠道', icon: '✉' },
   { id: 'health', path: '/health', group: '系统', title: '健康与恢复', icon: '✚' },
 ];
