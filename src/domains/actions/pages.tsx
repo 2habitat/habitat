@@ -83,12 +83,22 @@ export function TodayPage() {
   if (error) return <ErrorBox error={error} onRetry={() => void refetch()} />;
   if (!data) return null;
 
+  // 「安排」不只是 event：任务写了 [at:: 14:00-15:30] 也是今天的安排。
+  // 两边的来源不同（events vs actions），在视图层合成一条时间线，存储不动。
+  const scheduledToday = (allActions?.actions ?? []).filter(
+    (a) => a.due?.slice(0, 10) === todayStr() && !!a.scheduled && a.state !== 'done',
+  );
+  const plan = [
+    ...data.events.map((e) => ({ id: e.id, start: e.start.slice(11, 16), end: e.end.slice(11, 16), title: e.title, task: false })),
+    ...scheduledToday.map((a) => ({ id: a.id, start: a.scheduled![0], end: a.scheduled![1], title: a.text, task: true })),
+  ].sort((x, y) => x.start.localeCompare(y.start));
+
   return (
     <div className="content-wide">
       <div className="grid" style={{ marginBottom: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
         <Stat num={data.actions.length} label="今天要做" />
         <Stat num={data.overdue.length} label="已过期" hint="due 早于今天" />
-        <Stat num={data.events.length} label="今天的安排" />
+        <Stat num={plan.length} label="今天的安排" />
         <Stat num={data.reading.length} label="读到一半" />
         {/* 未来任务不算「今天」，但第一屏全 0 会让人以为库里什么都没建 */}
         <Stat num={allActions?.actions.length ?? 0} label="全部待办" hint="含未来" />
@@ -125,12 +135,13 @@ export function TodayPage() {
       )}
 
       <Card title="今天的安排" desc="安排和到期是两件事，别混">
-        {data.events.length === 0
-          ? <div className="small muted">今天没有日程。</div>
-          : data.events.map((e) => (
-            <div key={e.id} className="row" style={{ padding: '6px 0' }}>
-              <span className="mono">{e.start.slice(11, 16)}–{e.end.slice(11, 16)}</span>
-              <span style={{ flex: 1 }}>{e.title}</span>
+        {plan.length === 0
+          ? <div className="small muted">今天没有日程，也没有排期的任务。</div>
+          : plan.map((p) => (
+            <div key={p.id} className="row" style={{ padding: '6px 0' }}>
+              <span className="mono">{p.start}–{p.end}</span>
+              {p.task && <Chip tone="accent">任务</Chip>}
+              <span className="ellipsis" style={{ flex: 1 }} title={p.title}>{p.title}</span>
             </div>
           ))}
       </Card>
