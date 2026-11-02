@@ -32,6 +32,12 @@ export function FilesPage() {
   const [busy, setBusy] = useState('');
   const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null);
   const [newDir, setNewDir] = useState('');
+  // 排序 / 筛选 / 搜索：目录里几百个文件时，光靠肉眼找不动
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState<'all' | 'markdown' | 'text' | 'image' | 'pdf' | 'other'>('all');
+  const [only, setOnly] = useState<'all' | 'indexed' | 'unindexed'>('all');
+  const [sortBy, setSortBy] = useState<'name' | 'size' | 'mtime'>('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['fs', path, showHidden],
@@ -100,6 +106,23 @@ export function FilesPage() {
   if (isLoading) return <Spinner />;
   if (!data) return <Empty title="读不到目录" desc="检查空间根是否可访问" />;
 
+  const kw = q.trim().toLowerCase();
+  const visibleDirs = data.dirs.filter((d) => !kw || d.name.toLowerCase().includes(kw));
+  const visible = data.files
+    .filter((f) => kind === 'all' || f.kind === kind)
+    .filter((f) => only === 'all' || (only === 'indexed' ? f.indexed : !f.indexed))
+    .filter((f) => !kw || f.name.toLowerCase().includes(kw))
+    .sort((a, b) => {
+      const base =
+        sortBy === 'name'
+          ? a.name.localeCompare(b.name, 'zh')
+          : sortBy === 'size'
+            ? a.bytes - b.bytes
+            : a.mtime.localeCompare(b.mtime);
+      return sortDir === 'asc' ? base : -base;
+    });
+  const filtering = !!kw || kind !== 'all' || only !== 'all';
+
   return (
     <div className="content-wide">
       <Card
@@ -148,6 +171,78 @@ export function FilesPage() {
           </span>
         </div>
 
+        <div className="row row-wrap small" style={{ marginTop: 8, gap: 6 }} data-testid="fs-tools">
+          <input
+            className="input"
+            style={{ width: 200 }}
+            placeholder="搜索文件名…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            data-testid="fs-search"
+          />
+          <select
+            className="input"
+            style={{ width: 110 }}
+            value={kind}
+            onChange={(e) => setKind(e.target.value as typeof kind)}
+            data-testid="fs-kind"
+          >
+            <option value="all">全部类型</option>
+            <option value="markdown">Markdown</option>
+            <option value="text">文本 / 数据</option>
+            <option value="image">图片</option>
+            <option value="pdf">PDF</option>
+            <option value="other">其他</option>
+          </select>
+          <select
+            className="input"
+            style={{ width: 110 }}
+            value={only}
+            onChange={(e) => setOnly(e.target.value as typeof only)}
+            data-testid="fs-only"
+          >
+            <option value="all">全部状态</option>
+            <option value="indexed">已入库</option>
+            <option value="unindexed">未入库</option>
+          </select>
+
+          <span style={{ width: 8 }} />
+          {([['name', '名称'], ['size', '大小'], ['mtime', '时间']] as const).map(([k, label]) => (
+            <button
+              key={k}
+              className="btn btn-sm"
+              aria-pressed={sortBy === k}
+              style={{ border: 'none', background: sortBy === k ? 'var(--surface-2)' : 'transparent' }}
+              onClick={() => {
+                if (sortBy === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                else {
+                  setSortBy(k);
+                  // 名称默认正序，大小和时间默认倒序（大的/新的先看）
+                  setSortDir(k === 'name' ? 'asc' : 'desc');
+                }
+              }}
+              data-testid={`fs-sort-${k}`}
+            >
+              {label}
+              {sortBy === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+            </button>
+          ))}
+
+          {filtering && (
+            <button
+              className="btn btn-sm"
+              onClick={() => { setQ(''); setKind('all'); setOnly('all'); }}
+              data-testid="fs-clear"
+            >
+              清除筛选
+            </button>
+          )}
+          <span className="spacer" />
+          <span className="muted" data-testid="fs-count">
+            {filtering ? `筛出 ${visible.length} / ${data.files.length}` : `${data.files.length} 个文件`}
+          </span>
+        </div>
+
         {newDir !== '' && (
           <div className="row" style={{ marginTop: 8 }}>
             <input
@@ -183,9 +278,19 @@ export function FilesPage() {
 
         {data.dirs.length === 0 && data.files.length === 0 ? (
           <Empty title="空目录" desc="可以上传文件，或新建子目录" />
+        ) : visibleDirs.length === 0 && visible.length === 0 ? (
+          <Empty
+            title="没有匹配的文件"
+            desc={`这个目录共有 ${data.files.length} 个文件，当前筛选条件一个都没匹配上`}
+            action={
+              <button className="btn" onClick={() => { setQ(''); setKind('all'); setOnly('all'); }}>
+                清除筛选
+              </button>
+            }
+          />
         ) : (
           <div style={{ marginTop: 10, borderTop: '1px solid var(--border)' }}>
-            {data.dirs.map((d) => (
+            {visibleDirs.map((d) => (
               <div
                 key={d.path}
                 className="row"
@@ -199,7 +304,7 @@ export function FilesPage() {
               </div>
             ))}
 
-            {data.files.map((f) => (
+            {visible.map((f) => (
               <div key={f.path}>
                 <div
                   className="row"

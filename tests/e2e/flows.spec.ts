@@ -882,3 +882,66 @@ test('文件：能看目录、预览内容；上传→改名→归档是一条�
   });
   expect(archived.dirs.length).toBeGreaterThan(0);
 });
+
+/* ---------------- 25. 文件页：排序 / 筛选 / 搜索 ---------------- */
+
+test('文件：搜索能收窄、无结果有提示、排序可正反切换', async ({ page }) => {
+  await goto(page, 'files');
+
+  // 自己造三个大小确定的文件，不依赖夹具里恰好有什么
+  const files = [
+    { name: 'aa-1kb.txt', bytes: 1024 },
+    { name: 'bb-5kb.txt', bytes: 5120 },
+    { name: 'cc-2kb.txt', bytes: 2048 },
+  ];
+  for (const f of files) {
+    await page.locator('input[type="file"]').first().setInputFiles({
+      name: f.name,
+      mimeType: 'text/plain',
+      buffer: Buffer.alloc(f.bytes, 'x'),
+    });
+    await page.waitForTimeout(1200);
+  }
+
+  const rows = page.locator('[data-testid="fs-file"]');
+  for (const f of files) {
+    await expect(rows.filter({ hasText: f.name })).toHaveCount(1);
+  }
+
+  // 搜索收窄
+  await page.fill('[data-testid="fs-search"]', 'aa-');
+  await page.waitForTimeout(400);
+  await expect(rows).toHaveCount(1);
+  await expect(page.locator('[data-testid="fs-count"]')).toContainText('筛出');
+
+  // 搜不到：要说"没有匹配"，不能显示空目录
+  await page.fill('[data-testid="fs-search"]', 'zzz-不存在-zzz');
+  await page.waitForTimeout(400);
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByText('没有匹配的文件')).toBeVisible();
+
+  // 清除
+  await page.click('[data-testid="fs-clear"]');
+  await page.waitForTimeout(400);
+  await expect(rows.filter({ hasText: 'aa-1kb.txt' })).toHaveCount(1);
+
+  // 按大小排序：只看我们造的三个文件的相对顺序（目录里还有 space.yaml 等）
+  const idx = async (needle: string) => (await rows.allInnerTexts()).findIndex((t) => t.includes(needle));
+  await page.click('[data-testid="fs-sort-size"]');
+  await page.waitForTimeout(400);
+  // 首次点默认倒序：5KB 在 1KB 前面
+  expect(await idx('bb-5kb.txt')).toBeLessThan(await idx('aa-1kb.txt'));
+  await page.click('[data-testid="fs-sort-size"]');
+  await page.waitForTimeout(400);
+  // 再点转正序：反过来
+  expect(await idx('aa-1kb.txt')).toBeLessThan(await idx('bb-5kb.txt'));
+
+  // 按入库状态筛选：这三个都是未入库
+  await page.selectOption('[data-testid="fs-only"]', 'unindexed');
+  await page.waitForTimeout(400);
+  const un = await rows.count();
+  expect(un).toBeGreaterThanOrEqual(3);
+  for (let i = 0; i < un; i += 1) {
+    expect(await rows.nth(i).innerText()).toContain('未入库');
+  }
+});
