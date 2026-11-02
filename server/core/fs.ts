@@ -87,14 +87,20 @@ export async function listDir(hab: Habitat, rel = '', opts: { showHidden?: boole
   const files: FileEntry[] = [];
   let hiddenSkipped = 0;
 
-  for (const e of entries) {
+  // 先并发 stat：几百个文件时串行 stat 会成为主要开销（实测 500 个文件 14ms）
+  const stats = await Promise.all(
+    entries.map((e) => fsp.stat(path.join(abs, e.name)).catch(() => null)),
+  );
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const e = entries[i];
     const childRel = rel ? `${rel}/${e.name}` : e.name;
     if (!opts.showHidden && HIDDEN.has(e.name)) {
       // .habitat 是运行时状态，.git 是版本库：默认藏起来，但告诉用户藏了几个
       hiddenSkipped += 1;
       continue;
     }
-    const st = await fsp.stat(path.join(abs, e.name)).catch(() => null);
+    const st = stats[i];
     if (!st) continue;
     const hit = idx.get(childRel);
     if (e.isDirectory()) {

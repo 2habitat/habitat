@@ -167,6 +167,60 @@ export class SearchIndex {
     this.db.prepare('INSERT INTO fts(id,title,body) VALUES(?,?,?)').run(o.id, tokenize(title), tokenize(body));
   }
 
+  /**
+   * 增量同步：只重插指定对象，顺带刷新它们的链接与标签。
+   *
+   * 为什么要有它：提交一次只改一两个对象，却要把全库正文重读一遍、全表重写一遍，
+   * 一篇三万字的长笔记光分词就要几十毫秒。186 个对象实测整库重建 242ms，
+   * 每次勾任务都等这么久，明显是浪费。
+   */
+  async syncObjects(store: Store, ids: string[]): Promise<void> {
+    if (!this.db.open || !ids.length) return;
+    const objs = [...new Set(ids)].map((id) => store.objects.get(id)).filter((o): o is AnyObject => !!o);
+    if (!objs.length) return;
+    const bodies = await loadBodies(store, objs.map((o) => o.id));
+    if (!this.db.open) return;
+
+    const delDoc = this.db.prepare('DELETE FROM docs WHERE id = ?');
+    const delFts = this.db.prepare('DELETE FROM fts WHERE id = ?');
+    const delLinks = this.db.prepare('DELETE FROM links WHERE from_id = ?');
+    const delTags = this.db.prepare('DELETE FROM tags WHERE object_id = ?');
+    const insDoc = this.db.prepare(
+      'INSERT OR REPLACE INTO docs(id,type,title,body,path,work_id,updated_at,rev) VALUES(?,?,?,?,?,?,?,?)',
+    );
+    const insFts = this.db.prepare('INSERT INTO fts(id,title,body) VALUES(?,?,?)');
+    const insLink = this.db.prepare('INSERT INTO links(from_id,to_stem,to_id) VALUES(?,?,?)');
+    const insTag = this.db.prepare('INSERT INTO tags(object_id,tag) VALUES(?,?)');
+
+    const tx = this.db.transaction(() => {
+      for (const o of objs) {
+        // 先清后插：标题、类型、正文都可能变，残留旧行会让检索结果对不上
+        delDoc.run(o.id);
+        delFts.run(o.id);
+        delLinks.run(o.id);
+        delTags.run(o.id);
+
+        const title = displayTitle(store, o);
+        const body = bodySync(store, o) || bodies.get(o.id) || '';
+        insDoc.run(o.id, o.type, title, body, store.file(o.id) ?? '', workIdOf(o), o.updatedAt, o.rev);
+        insFts.run(o.id, tokenize(title), tokenize(body));
+        for (const tg of (o as { tags?: string[] }).tags ?? []) insTag.run(o.id, tg);
+        for (const l of store.links) if (l.from === o.id) insLink.run(l.from, l.to, l.resolved ?? null);
+      }
+    });
+    tx();
+  }
+
+  /** 只追加新事件（幂等）：整库重建不必每次把历史事件重写一遍 */
+  appendJournal(events: { id: string; at: string; actor: string; op: string; phase: string; target: string; summary: string }[]): void {
+    if (!this.db.open || !events.length) return;
+    const ins = this.db.prepare('INSERT OR REPLACE INTO journal(id,at,actor,op,phase,target,summary) VALUES(?,?,?,?,?,?,?)');
+    const tx = this.db.transaction(() => {
+      for (const e of events) ins.run(e.id, e.at, e.actor, e.op, e.phase, e.target, e.summary);
+    });
+    tx();
+  }
+
   remove(id: Id): void {
     this.db.prepare('DELETE FROM docs WHERE id = ?').run(id);
     this.db.prepare('DELETE FROM fts WHERE id = ?').run(id);

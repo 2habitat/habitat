@@ -53,7 +53,7 @@ export class Journal {
   }
 
   private async files(): Promise<string[]> {
-    const all = await this.adapter.list('.habitat/journal');
+    const all = await this.adapter.list('.habitat/journal').catch(() => []);
     return all.filter((e) => e.path.endsWith('.jsonl')).map((e) => e.path).sort();
   }
 

@@ -49,8 +49,10 @@ export class Habitat {
     const h = new Habitat(store, dbPath);
     h.journal = new Journal(store.adapter, store.space.id);
     h.index = new SearchIndex(opts.fresh ? ':memory:' : dbPath);
-    h.changes = new ChangeService(store, h.journal, store.adapter, () => {
-      void h.reindex();
+    // 提交后只同步动过的那几个对象，不整库重建。
+    // 之前每次提交都 void h.reindex()，186 个对象的真实库要 242ms，而且完全没必要。
+    h.changes = new ChangeService(store, h.journal, store.adapter, (ids) => {
+      void h.syncIndex(ids);
     });
     await h.reindex();
     return h;
@@ -80,10 +82,40 @@ export class Habitat {
    * 重扫要串行：文件监听和「手动重建索引」可能同时触发，
    * 两个 scan 交错会互相清空对象表，SQLite 也会撞在一起——表现是请求直接断掉。
    */
-  async rescan(): Promise<void> {
+  /**
+   * 重扫。
+   *
+   * 传 ids 时走增量：只重插这几个对象的索引，事件也只追加最近的。
+   * 不传就整库重建——外部改动、批量迁移这类"不知道改了什么"的场合用它。
+   *
+   * 为什么分两条路：整库重建要重读所有正文并重新分词，
+   * 真实库 186 个对象实测 242ms；而一次提交只改一两个对象。
+   */
+  private indexChain: Promise<void> = Promise.resolve();
+
+  /** 只同步指定对象的索引（提交后用）。串行执行，避免和重扫撞车。 */
+  async syncIndex(ids: string[]): Promise<void> {
+    if (this.closed || !ids.length) return;
+    const run = this.indexChain.then(async () => {
+      await this.index.syncObjects(this.store, ids);
+      const recent = await this.journal.query({ limit: 50 });
+      this.index.appendJournal(recent);
+    });
+    this.indexChain = run.catch(() => undefined);
+    await run;
+  }
+
+  async rescan(ids?: string[]): Promise<void> {
     const run = this.rescanChain.then(async () => {
       await this.store.scan();
-      await this.reindex();
+      if (ids && ids.length) {
+        await this.index.syncObjects(this.store, ids);
+        // 事件表用 INSERT OR REPLACE 追加，重复插不会出错，所以只取最近一批就够
+        const recent = await this.journal.query({ limit: 50 });
+        this.index.appendJournal(recent);
+      } else {
+        await this.reindex();
+      }
     });
     // 即使这一次失败，链也要继续，否则后面所有重扫都会被卡死
     this.rescanChain = run.catch(() => undefined);

@@ -75,8 +75,9 @@ export const api = fp<ApiOpts>(async (app: FastifyInstance, opts: ApiOpts) => {
   }
   app.decorate('habitat', hab);
 
-  const rescan = async () => {
-    await hab.rescan();
+  /** 传 ids 走增量索引；不传就整库重建（外部改动、批量操作时用） */
+  const rescan = async (ids?: string[]) => {
+    await hab.rescan(ids);
   };
 
   /* ---------------- 读 ---------------- */
@@ -520,7 +521,7 @@ function asBuffer(body: unknown): Buffer | null {
     const b = req.body as { title: string; body: string; kind?: never; srcIds?: Id[]; target?: 'inbox' | 'notes' };
     return wrap(async () => {
       const r = await hab.capture({ ...b, actor: actorOf(b, req.headers) });
-      await rescan();
+      await rescan([r.id]);
       return { ok: true, ...r };
     }, reply);
   });
@@ -529,7 +530,7 @@ function asBuffer(body: unknown): Buffer | null {
     const b = req.body as { srcId: Id; title: string; body: string; kind?: 'point' | 'summary' | 'outline' | 'question'; quote?: string };
     return wrap(async () => {
       const r = await hab.derive({ ...b, actor: actorOf(b, req.headers) });
-      await rescan();
+      await rescan([r.id]);
       return { ok: true, ...r };
     }, reply);
   });
@@ -541,7 +542,7 @@ function asBuffer(body: unknown): Buffer | null {
     };
     return wrap(async () => {
       const r = await hab.annotate({ ...b, actor: actorOf(b, req.headers) });
-      await rescan();
+      await rescan([r.id]);
       return { ok: true, ...r };
     }, reply);
   });
@@ -569,7 +570,7 @@ function asBuffer(body: unknown): Buffer | null {
     const b = req.body as { text: string; due?: string; flow?: 'now' | 'next' | 'later'; projectId?: Id };
     return wrap(async () => {
       const r = await hab.addAction({ ...b, actor: actorOf(b, req.headers) });
-      await rescan();
+      await rescan([r.id]);
       return { ok: true, ...r };
     }, reply);
   });
@@ -578,7 +579,7 @@ function asBuffer(body: unknown): Buffer | null {
     const b = req.body as { title: string; date: string; start: string; end?: string; projectId?: Id };
     return wrap(async () => {
       const r = await hab.addEvent({ ...b, actor: actorOf(b, req.headers) });
-      await rescan();
+      await rescan([r.id]);
       return { ok: true, ...r };
     }, reply);
   });

@@ -162,7 +162,10 @@ export class LocalDirAdapter implements StorageAdapter {
           if (rel === '.habitat/backup') continue; // 备份不参与扫描，避免指数膨胀
           await walk(full);
         } else if (it.isFile()) {
-          const st = await fsp.stat(full);
+          // 写入是「临时文件 + rename」，readdir 和 stat 之间文件完全可能已经不在了。
+          // 这里不容错的话，一次并发写入就能让整次扫描抛 ENOENT 而中止。
+          const st = await fsp.stat(full).catch(() => null);
+          if (!st) continue; // 刚被换掉的，下次扫描自然会有新条目
           out.push({ path: rel, bytes: st.size, mtime: st.mtime.toISOString() });
         }
       }

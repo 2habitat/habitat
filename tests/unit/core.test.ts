@@ -967,3 +967,39 @@ describe('文件浏览', () => {
     expect(archived.files.some((f) => f.path === r.moved[0].to)).toBe(true);
   });
 });
+
+/* ---------------- W. 增量索引的正确性 ---------------- */
+
+describe('增量索引', () => {
+  it('提交后新内容立刻可检索，且不残留旧标题', async () => {
+    const note = hab.store.all('note')[0] as unknown as { id: string; title: string };
+    const stamp = `ZZQ${Date.now()}`;
+
+    // 改标题 + 加一个检索得到的新词
+    const cs = await hab.changes.propose({
+      ops: [{ t: 'update', id: note.id, patch: { title: `新标题 ${stamp}` } }],
+      reason: '增量索引测试',
+      actor: 'human',
+    } as never);
+    const r = await hab.changes.commit(cs.id);
+    expect(r.ok).toBe(true);
+
+    // 提交回调是 void 的，等一拍让它跑完
+    await new Promise((res) => setTimeout(res, 300));
+
+    const hits = hab.index.search(stamp, { limit: 10 });
+    expect(hits.some((h) => h.id === note.id)).toBe(true);
+
+    // 旧标题不该还能检到（docs 表里是覆盖写，不是追加）
+    const old = hab.index.search(note.title, { limit: 10 });
+    expect(old.some((h) => h.id === note.id && h.title === note.title)).toBe(false);
+  });
+
+  it('增量同步不会把别的对象从索引里弄丢', async () => {
+    const before = hab.index.search('线性注意力', { limit: 50 }).length;
+    const one = hab.store.all('note')[1] as unknown as { id: string };
+    await hab.syncIndex([one.id]);
+    const after = hab.index.search('线性注意力', { limit: 50 }).length;
+    expect(after).toBe(before);
+  });
+});
