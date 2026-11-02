@@ -60,6 +60,8 @@ export interface LifeSnapshot {
   stuck: StuckItem[];
   /** 有 AI 钩子的卡点——这才是 AI 该接手的 */
   agentReady: StuckItem[];
+  /** 稳定态：内容写成完整判断、只差一次人工确认的（不计入欠账） */
+  stable: { id: string; title: string; state: string; stateName: string; why: string }[];
   /** 翻新队列：冷掉但还没结灰的，和已经结灰的 */
   refresh: { id: string; title: string; state: string; stateName: string; vitality: Vitality; idleDays: number; why: string }[];
   byVitality: { vitality: Vitality; name: string; n: number }[];
@@ -100,6 +102,9 @@ export async function lifeViewOf(
   const extra: Partial<LifeFacts> = {
     inbound: inboundOf(hab, id),
     outbound: outboundOf(hab, id),
+    // status 不一定挂在对象上（work.yaml 的 status 只被收进 statusOf），
+    // 统一从那里取，否则「备查」标记永远不生效
+    reference: (hab.store as unknown as { statusOf: Map<string, string> }).statusOf.get(id) === 'reference',
   };
 
   const t = (obj as unknown as { type: string }).type;
@@ -107,6 +112,10 @@ export async function lifeViewOf(
     // 笔记的正文本来就在内存里（Scan 时已解析），这里不会读盘
     const body = await hab.store.body(id).catch(() => '');
     extra.bodyLength = body.length;
+    // 「有没有结论段」决定它是「写完了只差确认」还是「真的没写完」。
+    // 只看小节标题，不看正文里提没提到 TODO——正文里讨论 TODO 的笔记太多了，
+    // 用关键词扫会把引用源码的段落全判成没写完（实测 14 篇误报里 12 篇是这个）。
+    extra.hasConclusion = /^#{1,4}\s*(结论|判断|要点|小结|结论先行|一句话)/m.test(body);
   }
   if (t === 'part') {
     const anns = hab.store.all('annotation').filter((a) => (a as unknown as { repId?: string }).repId);
@@ -138,6 +147,7 @@ export async function lifeSnapshot(hab: Habitat): Promise<LifeSnapshot> {
 
 async function computeSnapshot(hab: Habitat): Promise<LifeSnapshot> {
   const items: StuckItem[] = [];
+  const stableItems: LifeSnapshot['stable'] = [];
   const counter = new Map<string, { flow: string; stateName: string; n: number }>();
 
   const targets: AnyObject[] = [
@@ -155,8 +165,8 @@ async function computeSnapshot(hab: Habitat): Promise<LifeSnapshot> {
     if (!got) continue;
     const { view, days } = got;
 
-    // archived / superseded 是终点，不算卡住
-    if (view.state === 'archived' || view.state === 'superseded') continue;
+    // 终态不进任何队列：归档、被取代、已定稿、备查都是走完了
+    if (['archived', 'superseded', 'settled', 'reference'].includes(view.state)) continue;
 
     const k = `${view.flow}|${view.state}`;
     const cur = counter.get(k) ?? { flow: view.flow, stateName: view.stateName, n: 0 };
@@ -169,6 +179,19 @@ async function computeSnapshot(hab: Habitat): Promise<LifeSnapshot> {
 
     const created = String((obj as unknown as { createdAt?: string }).createdAt ?? '');
     const vit = vitalityOf(usage[id], created);
+
+    // 只差一次确认的，单独归堆，不进欠账清单
+    if (!view.stuck) {
+      stableItems.push({
+        id,
+        title,
+        state: view.state,
+        stateName: view.stateName,
+        why: view.blockers[0] ?? '内容完整，等你确认是否定稿',
+      });
+      continue;
+    }
+
     items.push({
       id,
       type: view.type,
@@ -224,6 +247,7 @@ async function computeSnapshot(hab: Habitat): Promise<LifeSnapshot> {
     at: new Date().toISOString(),
     byState,
     stuck,
+    stable: stableItems.sort((a, b) => a.title.localeCompare(b.title, 'zh')),
     agentReady: stuck.filter((x) => !!x.aiHook).slice(0, 20),
     refresh: refresh.slice(0, 50),
     byVitality,

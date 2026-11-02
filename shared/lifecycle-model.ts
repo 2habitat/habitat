@@ -191,6 +191,14 @@ export const FLOWS: FlowDef[] = [
         aiHook: '串联：把这一章和另外几章串成一篇综述',
         output: 'evergreen + 被引用 ≥2 处',
       },
+      {
+        key: 'reference',
+        name: '备查',
+        goal: '不打算逐章消化，留作查阅',
+        next: [],
+        actors: ['human'],
+        output: 'status: reference（work.yaml 或章节 frontmatter）',
+      },
     ],
   },
 ];
@@ -236,6 +244,10 @@ export interface LifeFacts {
   readPct?: number;
   reviewedAt?: string | null;
   hasSource?: boolean;
+  /** 正文里有「结论/判断/要点」这类小节——内容上是个完整判断，不只是素材 */
+  hasConclusion?: boolean;
+  /** 材料被标记为「备查」：不打算消化，留作查阅 */
+  reference?: boolean;
 }
 
 export interface LifeView {
@@ -249,6 +261,15 @@ export interface LifeView {
   /** 下一步能做什么（人/AI 都看这份） */
   next: { key: string; name: string; actors: string[]; output: string; aiHook?: string }[];
   aiHook?: string;
+  /**
+   * 是否算「真欠账」。
+   *
+   * 不算的三种情况：终态（归档/被取代/已定稿/备查/已完成）、
+   * 以及「内容已经写成完整判断、只差一次人工确认」的接入态。
+   * 最后一类如果算欠账，数字会永远虚高——52 篇里有 39 篇是这个情况，
+   * 看三天人就会学会忽略这个提醒，真正卡住的也一起被忽略。
+   */
+  stuck: boolean;
 }
 
 export function lifeOf(f: LifeFacts): LifeView | null {
@@ -262,16 +283,29 @@ export function lifeOf(f: LifeFacts): LifeView | null {
     .filter((s): s is StateDef => !!s)
     .map((s) => ({ key: s.key, name: s.name, actors: s.actors as string[], output: s.output, aiHook: s.aiHook }));
 
+  const blockers = blockersFor(f, def.key);
   return {
     type: f.type,
     flow: flow.kind,
     state: def.key,
     stateName: def.name,
     goal: def.goal,
-    blockers: blockersFor(f, def.key),
+    blockers,
     next: nxt,
     aiHook: def.aiHook,
+    stuck: isStuck(f, def.key, blockers),
   };
+}
+
+/** 终态：到了这儿就不再是欠账 */
+const TERMINAL = new Set(['archived', 'superseded', 'settled', 'reference', 'done']);
+
+function isStuck(f: LifeFacts, key: string, blockers: string[]): boolean {
+  if (TERMINAL.has(key)) return false;
+  // 接入态 + 正文有结论段 = 内容完整，只差「我确认它成立」这一个动作。
+  // 那是每周抽几篇做的事，不该和其他卡点混在一起报数。
+  if (key === 'linked' && f.hasConclusion) return false;
+  return blockers.length > 0 || key !== 'open';
 }
 
 function resolveState(f: LifeFacts): string {
@@ -288,6 +322,8 @@ function resolveState(f: LifeFacts): string {
     if ((f.bodyLength ?? 0) >= 200) return 'developed';
     return 'captured';
   }
+  // material：备查是终态，优先判——否则一本参考书会永远显示成"没消化"
+  if (f.reference) return 'reference';
   // material：沿用五段闸门，从高往低判
   if (f.evergreen && (f.inbound ?? 0) >= 2) return 'settle';
   if (f.reviewedAt) return 'review';
@@ -298,8 +334,14 @@ function resolveState(f: LifeFacts): string {
 
 function blockersFor(f: LifeFacts, key: string): string[] {
   const out: string[] = [];
-  if (key === 'captured') {
-    if ((f.bodyLength ?? 0) < 200) out.push(`正文只有 ${f.bodyLength ?? 0} 字，还不足以成篇`);
+  // 知识流的键是 captured，材料流的是 capture——两边都要认。
+  // 之前只写了 captured，材料流从来没有卡点理由（因为没人读这个字段，一直没暴露）。
+  if (key === 'captured' || key === 'capture') {
+    if (['work', 'part', 'rep'].includes(f.type)) {
+      out.push('原件在，还没有任何批注或衍生笔记');
+    } else if ((f.bodyLength ?? 0) < 200) {
+      out.push(`正文只有 ${f.bodyLength ?? 0} 字，还不足以成篇`);
+    }
   }
   if (key === 'developed') {
     if (!(f.inbound ?? 0) && !(f.outbound ?? 0)) out.push('还没有任何双链');
@@ -314,7 +356,8 @@ function blockersFor(f: LifeFacts, key: string): string[] {
     if (!f.reviewedAt) out.push('没有回顾记录');
   }
   if (key === 'linked') {
-    if (!f.evergreen) out.push('还没标记为定稿（evergreen）');
+    // 有结论段说明内容已经成形，缺的只是一次确认；没结论才是真的没写完
+    if (!f.evergreen) out.push(f.hasConclusion ? '内容完整，待确认是否定稿' : '有成篇和双链，但没写结论');
   }
   return out;
 }
@@ -328,6 +371,7 @@ export function factsOf(obj: AnyObject, extra: Partial<LifeFacts> = {}): LifeFac
     state: o.state as string | undefined,
     archivedAt: o.archivedAt as string | undefined,
     evergreen: o.status === 'evergreen',
+    reference: o.status === 'reference',
     supersededBy: o.supersededBy as string | undefined,
     bodyLength: typeof o.body === 'string' ? (o.body as string).length : undefined,
     ...extra,

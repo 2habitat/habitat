@@ -322,7 +322,10 @@ export interface BriefView {
   inbox: { id: string; title: string; days: number }[];
   counts: { links: number; brokenLinks: number; notes: number; parts: number; works: number; doneOld: number };
   archiveCandidates: { id: string; text: string; doneAt?: string }[];
-  stuck: { state: string; stateName: string; n: number }[];
+  /** 真欠账，按状态聚合。带 why 说明为什么算欠账——只报数字等于没报 */
+  stuck: { state: string; stateName: string; n: number; why: string }[];
+  /** 内容完整、只差一次确认的篇数（不计入欠账） */
+  stable: number;
   refresh: { id: string; title: string; idleDays: number; why: string }[];
   byVitality: { vitality: string; name: string; n: number }[];
 }

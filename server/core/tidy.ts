@@ -33,7 +33,9 @@ export interface BriefData {
     doneOld: number;
   };
   archiveCandidates: { id: string; text: string; doneAt?: string }[];
-  stuck: { state: string; stateName: string; n: number }[];
+  stuck: { state: string; stateName: string; n: number; why: string }[];
+  /** 内容完整、只差一次确认的篇数（不计入欠账） */
+  stable: number;
   agentReady: { id: string; title: string }[];
   refresh: { id: string; title: string; idleDays: number; why: string }[];
   byVitality: { vitality: string; name: string; n: number }[];
@@ -106,7 +108,11 @@ export async function collectBrief(hab: Habitat): Promise<BriefData> {
       doneOld: doneOld.length,
     },
     archiveCandidates: doneOld.slice(0, 50).map((a) => ({ id: a.id, text: a.text, doneAt: a.doneAt })),
-    stuck: snap.byState.map((x) => ({ state: x.state, stateName: x.stateName, n: x.n })),
+    // 只聚合「真欠账」。之前这里直接把状态分布当卡点报，
+    // 于是 52 篇写着完整结论的 growing 笔记也被算成「卡住」——数字虚高，
+    // 看三天就学会忽略了。状态分布另有 byState，别混用。
+    stuck: aggregateStuck(snap.stuck),
+    stable: snap.stable.length,
     agentReady: snap.agentReady.map((x) => ({ id: x.id, title: x.title })),
     refresh: snap.refresh.map((x) => ({ id: x.id, title: x.title, idleDays: x.idleDays, why: x.why })),
     byVitality: snap.byVitality.map((x) => ({ vitality: x.vitality, name: x.name, n: x.n })),
@@ -114,6 +120,18 @@ export async function collectBrief(hab: Habitat): Promise<BriefData> {
 }
 
 /** 一屏能看完的简报：陈述事实，不给建议（建议留给人和 AI） */
+/** 把欠账按状态聚合，顺带带上「为什么算欠账」——只报数字等于没报 */
+function aggregateStuck(items: { state: string; stateName: string; blockers: string[] }[]) {
+  const m = new Map<string, { state: string; stateName: string; n: number; why: string }>();
+  for (const x of items) {
+    const cur = m.get(x.state) ?? { state: x.state, stateName: x.stateName, n: 0, why: x.blockers[0] ?? '' };
+    cur.n += 1;
+    if (!cur.why && x.blockers[0]) cur.why = x.blockers[0];
+    m.set(x.state, cur);
+  }
+  return [...m.values()].sort((a, b) => b.n - a.n);
+}
+
 export function renderBrief(b: BriefData): string {
   const lines: string[] = [];
   const day = b.at.slice(0, 10);
@@ -156,9 +174,15 @@ export function renderBrief(b: BriefData): string {
 
   if (b.stuck.length) {
     lines.push('');
-    lines.push('## 卡在哪');
-    for (const s of b.stuck.slice(0, 5)) lines.push(`- ${s.stateName}：${s.n} 个`);
+    lines.push(`## 真欠账（${b.stuck.reduce((a, s) => a + s.n, 0)} 条）`);
+    for (const s of b.stuck.slice(0, 5)) lines.push(`- ${s.stateName}：${s.n} 个 —— ${s.why}`);
     if (b.agentReady.length) lines.push(`- 其中 ${b.agentReady.length} 个有明确的 AI 切入点（\`habitat next\`）`);
+  }
+
+  if (b.stable) {
+    lines.push('');
+    lines.push(`## 稳定态 ${b.stable} 篇`);
+    lines.push('内容已写成完整判断，只差「确认它仍成立」。每周抽几篇过一遍即可，不必每天看。');
   }
 
   lines.push('');

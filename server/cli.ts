@@ -525,7 +525,17 @@ async function main(): Promise<number> {
       const id = positional()[0];
       const file = arg('file');
       const body = file ? await readFile(file, 'utf8') : arg('body');
-      if (!id || body === undefined) return console.log('用法：habitat write <id> --body "…" | --file body.md'), 1;
+      const status = arg('status');
+      if (!id || (body === undefined && !status)) {
+        return console.log('用法：habitat write <id> --body "…" | --file body.md | --status reference'), 1;
+      }
+      if (body === undefined && status) {
+        // 只改状态：备查（reference）/ 定稿（evergreen）
+        const cs0 = await hab.changes.propose({ ops: [{ t: 'update', id, patch: { status } }], reason: `标为 ${status}`, actor: 'human' } as never);
+        const r0 = await hab.changes.commit(cs0.id);
+        console.log(r0.ok ? `已把 ${id} 标为 ${status}` : '撞车了，没有覆盖');
+        return r0.ok ? 0 : 1;
+      }
       // 任务和日程是「一行」，没有独立正文；它们的文本就是那一行
       const obj = hab.store.get(id);
       const op = obj && (obj.type === 'action' || obj.type === 'event')

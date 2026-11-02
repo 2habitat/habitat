@@ -1161,3 +1161,46 @@ describe('增量扫描', () => {
     }
   });
 });
+
+/* ---------------- Y. 欠账口径：只报真卡点 ---------------- */
+
+describe('欠账口径', () => {
+  it('接入态 + 有结论段 → 不算欠账，归稳定态', async () => {
+    const { lifeOf } = await import('../../shared/lifecycle-model.ts');
+    const base = { type: 'note', bodyLength: 900, inbound: 2, outbound: 1 };
+
+    const done = lifeOf({ ...base, hasConclusion: true })!;
+    expect(done.state).toBe('linked');
+    expect(done.stuck).toBe(false);
+    expect(done.blockers[0]).toContain('待确认');
+
+    const unfinished = lifeOf({ ...base, hasConclusion: false })!;
+    expect(unfinished.stuck).toBe(true);
+    expect(unfinished.blockers[0]).toContain('没写结论');
+  });
+
+  it('备查是材料流终态，不再算欠账', async () => {
+    const { lifeOf } = await import('../../shared/lifecycle-model.ts');
+    const ref = lifeOf({ type: 'work', reference: true })!;
+    expect(ref.state).toBe('reference');
+    expect(ref.stateName).toBe('备查');
+    expect(ref.stuck).toBe(false);
+
+    // 同样的书不标备查，就是欠账
+    const normal = lifeOf({ type: 'work' })!;
+    expect(normal.state).toBe('capture');
+    expect(normal.stuck).toBe(true);
+    expect(normal.blockers[0]).toContain('衍生');
+  });
+
+  it('快照把稳定态与欠账分开，不混在一起报数', async () => {
+    const snap = await (await import('../../server/core/lifecycle.ts')).lifeSnapshot(hab);
+    // 两边不能重叠
+    const stuckIds = new Set(snap.stuck.map((x) => x.id));
+    for (const s of snap.stable) expect(stuckIds.has(s.id)).toBe(false);
+    // 归档/定稿/备查不进任何一边
+    for (const x of [...snap.stuck, ...snap.stable]) {
+      expect(['archived', 'superseded', 'settled', 'reference']).not.toContain(x.state);
+    }
+  });
+});
