@@ -1097,3 +1097,67 @@ describe('增量索引', () => {
     expect(after).toBe(before);
   });
 });
+
+/* ---------------- X. 增量扫描的正确性 ---------------- */
+
+/** 把扫描结果压成可比对的快照：对象、链接、词干、附件、行内块 */
+function snapStore(store: import('../../server/core/store.ts').Store) {
+  const types = ['note', 'work', 'part', 'rep', 'action', 'event', 'project', 'area', 'collection', 'annotation'] as const;
+  const objs = types.flatMap((t) =>
+    store.all(t).map((o) => {
+      const x = o as { id: string; title?: string; text?: string };
+      return `${t}|${x.id}|${x.title ?? x.text ?? ''}`;
+    }),
+  );
+  return {
+    objects: objs.sort(),
+    links: store.links.map((l) => `${l.from}→${l.to}`).sort(),
+    stems: [...store.stems.entries()].map(([k, v]) => `${k}=${v}`).sort(),
+    assets: store.assets.map((a) => a.path).sort(),
+    inline: [...store.inlineFiles.keys()].sort(),
+  };
+}
+
+describe('增量扫描', () => {
+  it('全命中缓存时，结果与上一次扫描完全一致', async () => {
+    const d = await makeSpace(MINI, false);
+    const h = await Habitat.open(d, { fresh: true });
+    try {
+      const first = snapStore(h.store);
+      await h.store.scan(); // 全部命中片段缓存 → 只重放
+      expect(snapStore(h.store)).toEqual(first);
+    } finally {
+      h.close();
+      await rmSpace(d);
+    }
+  });
+
+  it('改一个文件后，增量结果与全新实例的全量扫描一致', async () => {
+    const d = await makeSpace(MINI, false);
+    const h = await Habitat.open(d, { fresh: true });
+    let incremental: ReturnType<typeof snapStore>;
+    try {
+      // 改一篇笔记：内容变、大小变，签名必然不同
+      const target = (await import('node:fs')).readdirSync(`${d}/knowledge/notes`)[0];
+      const rel = `knowledge/notes/${target}`;
+      const abs = `${d}/${rel}`;
+      const fsm = await import('node:fs/promises');
+      const raw = await fsm.readFile(abs, 'utf8');
+      await fsm.writeFile(abs, `${raw}\n\n补一句：新增了 [[另一个目标]] 这条链接。\n`, 'utf8');
+
+      await h.store.scan(); // 只重解析这一个文件，其余重放
+      incremental = snapStore(h.store);
+    } finally {
+      h.close();
+    }
+
+    // 全新实例：没有任何片段缓存，必定走完整解析
+    const h2 = await Habitat.open(d, { fresh: true, dbPath: ':memory:' });
+    try {
+      expect(incremental).toEqual(snapStore(h2.store));
+    } finally {
+      h2.close();
+      await rmSpace(d);
+    }
+  });
+});

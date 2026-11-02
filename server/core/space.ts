@@ -107,9 +107,29 @@ export class Habitat {
 
   async rescan(ids?: string[]): Promise<void> {
     const run = this.rescanChain.then(async () => {
+      // 外部改动的情况没人告诉我们是哪几个对象变了，扫完自己比对一次。
+      // 通常只有一两个文件变，比对出来的变化集很小，就能走增量。
+      const before = new Map<string, string>();
+      for (const [id, o] of this.store.objects) before.set(id, `${o.rev}|${o.updatedAt}`);
+
       await this.store.scan();
-      if (ids && ids.length) {
-        await this.index.syncObjects(this.store, ids);
+
+      let changed = ids;
+      if (!changed) {
+        changed = [];
+        for (const [id, o] of this.store.objects) {
+          if (before.get(id) !== `${o.rev}|${o.updatedAt}`) changed.push(id);
+        }
+        // 有对象消失（外部删文件/改名）时对象图结构变了，老实整库重建
+        const removed = [...before.keys()].filter((id) => !this.store.objects.has(id));
+        if (removed.length) changed = [];
+      }
+
+      // 一个对象都没变（外部只是碰了下文件、或定时轮询）就不必重建索引
+      if (!changed.length) {
+        // no-op：索引与事件都没变化
+      } else if (changed.length <= 200) {
+        await this.index.syncObjects(this.store, changed);
         // 事件表用 INSERT OR REPLACE 追加，重复插不会出错，所以只取最近一批就够
         const recent = await this.journal.query({ limit: 50 });
         this.index.appendJournal(recent);

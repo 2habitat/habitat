@@ -77,6 +77,15 @@ export interface InlineFile {
 
 const SUPPLEMENTAL = /^(附录|x-|extra|zz|_)/i;
 
+type FragOp =
+  | { k: 'put'; obj: AnyObject; rel: string; inlineId?: string }
+  | { k: 'stem'; stem: string; id: Id }
+  | { k: 'link'; from: Id; to: string }
+  | { k: 'asset'; entry: AssetEntry }
+  | { k: 'inline'; rel: string; data: InlineFile }
+  | { k: 'src'; id: Id; v: string }
+  | { k: 'status'; id: Id; v: string };
+
 export class Store {
   adapter: StorageAdapter;
   wps: WpsSyncAdapter;
@@ -99,6 +108,28 @@ export class Store {
    * 真出现了，下一次全量重建（外部改动、手动 reindex）会纠正。
    */
   private readCache = new Map<string, { sig: string; raw: string }>();
+
+  /**
+   * 每个文件产生的「解析副作用」缓存。
+   *
+   * 为什么不是缓存解析结果而是缓存副作用：scanDoc 不是一个纯函数——它会往
+   * objects / links / stems / assets / inlineFiles 里写，还会分配 id。
+   * 与其重写一遍解析逻辑，不如把「它对世界做了什么」记下来，
+   * 下次签名没变就照着重放。顺序一致，结果就一致。
+   */
+  private fragments = new Map<string, { sig: string; ops: FragOp[] }>();
+  /** 录制中：scan 期间收集副作用；null 表示不录 */
+  private rec: FragOp[] | null = null;
+  /** 本次扫描新建的片段表（扫描结束时替换旧的） */
+  private nextFrags = new Map<string, { sig: string; ops: FragOp[] }>();
+  /**
+   * 结构性文件（work.yaml / space.yaml）的签名。
+   * 它们不进主循环、没有片段，所以不能用 fragments 判断有没有变——
+   * 之前就是这样：`fragments.get('space.yaml')` 永远是 undefined，
+   * 于是「结构变了」恒为真，增量扫描一次都没生效。
+   */
+  private structuralSigs = new Map<string, string>();
+  private fragPending: { rel: string; sig: string; from: number } | null = null;
   /** 本次扫描的签名表：rel → (mtime,size)，扫描开始时填充 */
   private sigIndex = new Map<string, string>();
 
@@ -325,7 +356,23 @@ export class Store {
       if (from) partsFromByDir.set(`${from}/`, slug);
     }
 
+    /*
+     * 增量扫描：签名没变的文件不再解析，直接重放上次的副作用。
+     *
+     * 但只要 work.yaml / space.yaml 变了就得全量——它们决定「哪些目录算一部作品的章节」，
+     * 一个文件的分组方式变了，它自己没变也得重新解析。
+     */
+    const structuralEntries = entries.filter((e) => /work\.yaml$/.test(e.path) || e.path === LAYOUT.space);
+    const structuralChanged = structuralEntries.some(
+      (e) => this.structuralSigs.get(e.path) !== this.sigIndex.get(e.path),
+    );
+
+    this.rec = [];
+    this.nextFrags = new Map();
+    this.fragPending = null;
+
     for (const e of entries) {
+      this.fragClose();
       const rel = e.path;
       if (rel.startsWith('.habitat/')) continue;
       if (rel === LAYOUT.space) continue;
@@ -335,6 +382,11 @@ export class Store {
 
       // 1. 作品定义已在上面统一处理
       if (new RegExp(`^${LAYOUT.works}/([^/]+)/work\\.yaml$`).test(rel)) continue;
+
+      // 签名没变就重放上次的副作用，不读盘也不解析
+      const sig = this.sigIndex.get(rel) ?? '';
+      if (!structuralChanged && this.fragTryReplay(rel, sig)) continue;
+      this.fragStart(rel, sig);
 
       // 2. 笔记 / 报告 / 收件箱 / 日志 / 复盘 / 专题 / 项目 / 领域 / 作品下的散篇
       if (rel.endsWith('.md')) {
@@ -366,18 +418,20 @@ export class Store {
       const carrier = CARRIERS[extOf(rel)];
       if (rel.startsWith(LAYOUT.originals)) {
         const seg = rel.slice(LAYOUT.originals.length + 1).split('/');
-        this.assets.push({ path: rel, bytes: e.bytes, kind: 'original', workSlug: seg.length > 1 ? seg[0] : undefined });
+        this.pushAsset({ path: rel, bytes: e.bytes, kind: 'original', workSlug: seg.length > 1 ? seg[0] : undefined });
       } else if (rel.startsWith(LAYOUT.attachments)) {
-        this.assets.push({ path: rel, bytes: e.bytes, kind: 'attachment' });
+        this.pushAsset({ path: rel, bytes: e.bytes, kind: 'attachment' });
       } else if (carrier) {
-        this.assets.push({ path: rel, bytes: e.bytes, kind: 'export' });
+        this.pushAsset({ path: rel, bytes: e.bytes, kind: 'export' });
       } else {
-        this.assets.push({ path: rel, bytes: e.bytes, kind: 'attachment' });
+        this.pushAsset({ path: rel, bytes: e.bytes, kind: 'attachment' });
       }
     }
 
+    this.fragClose();
+
     // 4. 章节与载体（作品目录要等 work.yaml 都读完才能建）
-    await this.scanParts(partFiles, worksBySlug);
+    await this.scanParts(partFiles, worksBySlug, structuralChanged);
     // 5. 原件若能从目录名匹配到作品，作为 locked 载体挂上去
     await this.linkOriginals(worksBySlug);
     // 6. 批注
@@ -386,11 +440,20 @@ export class Store {
     this.resolveLinks();
     await this.flushIds();
 
+    // 片段表换代：本次没出现过的文件（已删/已改名）自然被丢掉
+    this.fragments = this.nextFrags;
+    for (const e of structuralEntries) {
+      const sig = this.sigIndex.get(e.path);
+      if (sig) this.structuralSigs.set(e.path, sig);
+    }
+    this.rec = null;
+
     return this.report(entries.length);
   }
 
   private addStem(stem: string, id: Id): void {
     if (!stem) return;
+    this.rec?.push({ k: 'stem', stem, id });
     const k = stem.toLowerCase();
     // 章节先按文件名登记空 id 占位（那时 part 还没建出来）。回填真 id 时如果被 has() 挡住，
     // 「[[书名-·-第3章-…]]」这种按文件名写的链接就永远解析不到——所以空 id 必须允许覆盖。
@@ -421,6 +484,7 @@ export class Store {
   }
 
   private put(obj: AnyObject, rel: string, inlineId?: string): void {
+    this.rec?.push({ k: 'put', obj, rel, inlineId });
     this.objects.set(obj.id, obj);
     this.fileOf.set(obj.id, rel);
     if (inlineId) this.inlineOf.set(obj.id, inlineId);
@@ -430,13 +494,67 @@ export class Store {
   }
 
   /** 顺手记下 frontmatter 里模型之外但有用的原样字段 */
+  /* ---------------- 增量扫描的片段录制 ---------------- */
+
+  /**
+   * 收尾要在「下一个文件开始时」调用，不能写在循环末尾——
+   * 循环体里有 continue，写在末尾会被跳过，上一段录制就漏记了。
+   */
+  private fragClose(): void {
+    if (!this.fragPending || !this.rec) return;
+    this.nextFrags.set(this.fragPending.rel, {
+      sig: this.fragPending.sig,
+      ops: this.rec.slice(this.fragPending.from),
+    });
+    this.fragPending = null;
+  }
+
+  private fragStart(rel: string, sig: string): void {
+    if (!this.rec) return;
+    this.fragPending = { rel, sig, from: this.rec.length };
+  }
+
+  /** 签名没变就重放，返回 true 表示已处理完毕，调用方应跳过解析 */
+  private fragTryReplay(rel: string, sig: string): boolean {
+    const cached = this.fragments.get(rel);
+    if (!cached || cached.sig !== sig || !this.rec) return false;
+    // 重放时 rec 仍在录：录下来的就是同一批操作，缓存下一轮继续有效
+    for (const op of cached.ops) {
+      switch (op.k) {
+        case 'put': this.put(op.obj, op.rel, op.inlineId); break;
+        case 'stem': this.addStem(op.stem, op.id); break;
+        case 'link': this.links.push({ from: op.from, to: op.to, resolved: null }); break;
+        case 'asset': this.assets.push(op.entry); break;
+        case 'inline': this.inlineFiles.set(op.rel, op.data); break;
+        case 'src': this.sourceOf.set(op.id, op.v); break;
+        case 'status': this.statusOf.set(op.id, op.v); break;
+      }
+    }
+    this.nextFrags.set(rel, cached);
+    return true;
+  }
+
+  private pushAsset(entry: AssetEntry): void {
+    this.rec?.push({ k: 'asset', entry });
+    this.assets.push(entry);
+  }
+
+  private setInline(rel: string, data: InlineFile): void {
+    this.rec?.push({ k: 'inline', rel, data });
+    this.inlineFiles.set(rel, data);
+  }
+
   private noteExtra(id: Id, fm: Record<string, unknown>): void {
     // source 是一条真实的血缘关系，也要进链接表，否则对账时「来源指向了不存在的条目」看不出来
     if (fm.source !== undefined) {
+      this.rec?.push({ k: 'src', id, v: String(fm.source) });
       this.sourceOf.set(id, String(fm.source));
       this.collectLinks(id, String(fm.source));
     }
-    if (typeof fm.status === 'string') this.statusOf.set(id, fm.status);
+    if (typeof fm.status === 'string') {
+      this.rec?.push({ k: 'status', id, v: fm.status });
+      this.statusOf.set(id, fm.status);
+    }
     if (typeof fm.locked === 'boolean') this.lockedNote.set(id, fm.locked);
   }
 
@@ -491,7 +609,7 @@ export class Store {
 
     if (rel.startsWith(LAYOUT.actions) && /tasks?\.md$/i.test(rel)) {
       const blocks = parseTasks(body);
-      this.inlineFiles.set(rel, { blocks, kind: 'tasks' });
+      this.setInline(rel, { blocks, kind: 'tasks' });
       const base = this.baseFrom({}, 'action', rel, 'file');
       let n = 0;
       for (const b of blocks) {
@@ -513,7 +631,7 @@ export class Store {
 
     if (rel.startsWith(LAYOUT.events)) {
       const blocks = parseEvents(body);
-      this.inlineFiles.set(rel, { blocks, kind: 'events' });
+      this.setInline(rel, { blocks, kind: 'events' });
       const base = this.baseFrom({}, 'event', rel, 'file');
       let n = 0;
       for (const b of blocks) {
@@ -623,6 +741,7 @@ export class Store {
     let m: RegExpExecArray | null;
     const found: string[] = [];
     while ((m = re.exec(text))) {
+      this.rec?.push({ k: 'link', from: id, to: m[1].trim() });
       this.links.push({ from: id, to: m[1].trim(), resolved: null });
       found.push(m[1].trim());
     }
@@ -638,12 +757,18 @@ export class Store {
   private async scanParts(
     files: { rel: string; slug: string; bytes: number }[],
     worksBySlug: Map<string, Work>,
+    structuralChanged = true,
   ): Promise<void> {
     const editions = new Map<string, Id>();
     for (const { rel, slug, bytes } of files) {
+      this.fragClose();
+      const sig = this.sigIndex.get(rel) ?? '';
+      if (!structuralChanged && this.fragTryReplay(rel, sig)) continue;
+      this.fragStart(rel, sig);
+
       const work = worksBySlug.get(slug);
       if (!work) {
-        this.assets.push({ path: rel, bytes, kind: 'export' });
+        this.pushAsset({ path: rel, bytes, kind: 'export' });
         continue;
       }
       let editionId = editions.get(slug);
@@ -741,6 +866,7 @@ export class Store {
   }
 
   private async scanAnnotations(): Promise<void> {
+    this.fragClose();
     const files = await this.adapter.list(LAYOUT.annotations);
     for (const f of files) {
       if (!f.path.endsWith('.jsonl')) continue;
