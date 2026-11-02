@@ -392,7 +392,9 @@ export class Store {
   private addStem(stem: string, id: Id): void {
     if (!stem) return;
     const k = stem.toLowerCase();
-    if (!this.stems.has(k)) this.stems.set(k, id);
+    // 章节先按文件名登记空 id 占位（那时 part 还没建出来）。回填真 id 时如果被 has() 挡住，
+    // 「[[书名-·-第3章-…]]」这种按文件名写的链接就永远解析不到——所以空 id 必须允许覆盖。
+    if (!this.stems.get(k)) this.stems.set(k, id);
   }
 
   private baseFrom(
@@ -612,10 +614,15 @@ export class Store {
   }
 
   private collectLinks(id: Id, body: string): void {
+    // 代码围栏和行内代码里的 [[…]] 是写法示例，不是链接。契约文档里全是 `[[文件名]]`
+    // 这类示例；不剥掉的话，每改一次 AGENTS.md 就凭空多出 6 条「断链」。
+    const text = body
+      .replace(/^[ \t]{0,3}(```+|~~~+)[^\n]*\n[\s\S]*?^[ \t]{0,3}\1[^\n]*$/gm, '')
+      .replace(/`[^`\n]*`/g, '');
     const re = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g;
     let m: RegExpExecArray | null;
     const found: string[] = [];
-    while ((m = re.exec(body))) {
+    while ((m = re.exec(text))) {
       this.links.push({ from: id, to: m[1].trim(), resolved: null });
       found.push(m[1].trim());
     }

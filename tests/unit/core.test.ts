@@ -73,6 +73,100 @@ describe('扫描 · 目录布局映射成对象图', () => {
     const rate = 1 - s.unresolved / s.links;
     expect(rate).toBeGreaterThan(0.5);
   });
+
+  it('章节文件名当 wikilink 目标也能解析：占位空 id 不能吞掉后面的真 id', async () => {
+    // 真实库的章节叫「书名-·-第3章-…」，正文里引用的是文件名而不是 title。
+    // 扫描时先按文件名登记了空 id 占位，章节建完再回填真 id；如果回填被 has() 挡住，
+    // 这些链接就永远是「未解析」——关系页少边、反链缺失，看起来像没接上。
+    const d = await makeSpace({
+      ...MINI,
+      'knowledge/notes/2026-11-02-指向章节.md': `---
+title: 指向章节文件名
+type: note
+status: seedling
+tags: [test]
+summary: 链接写章节文件名，不写章节 title
+created: 2026-11-02
+updated: 2026-11-02
+---
+
+见 [[02-DeltaNet]]，也见 [[DeltaNet]]。
+`,
+    });
+    const h = await Habitat.open(d, { fresh: true });
+    const byFile = h.store.links.find((l) => l.to === '02-DeltaNet');
+    const byTitle = h.store.links.find((l) => l.to === 'DeltaNet');
+    expect(byFile?.resolved).toBeTruthy();
+    expect(byTitle?.resolved).toBeTruthy();
+    expect(byFile?.resolved).toBe(byTitle?.resolved);
+    h.close();
+    await rmSpace(d);
+  });
+});
+
+describe('链接只在正文里算，代码示例不算', () => {
+  it('代码围栏与行内代码里的 [[…]] 不产生链接', async () => {
+    // 契约/说明类文档里到处是 `[[文件名]]` 这种写法示例；当成真链接会把断链计数顶上去。
+    const d = await makeSpace({
+      ...MINI,
+      'knowledge/notes/2026-11-02-写法示例.md': `---
+title: 写法示例
+type: note
+status: seedling
+tags: [test]
+summary: 演示 wikilink 写法，示例不该进图
+created: 2026-11-02
+updated: 2026-11-02
+---
+
+正文引用 [[DeltaNet]]。
+
+行内示例：\`[[文件名]]\`。
+
+\`\`\`yaml
+source: "[[来源卡片]] 或 URL"
+related: ["[[其他条目]]"]
+\`\`\`
+`,
+    });
+    const h = await Habitat.open(d, { fresh: true });
+    const targets = h.store.links.map((l) => l.to);
+    expect(targets).toContain('DeltaNet');
+    expect(targets).not.toContain('文件名');
+    expect(targets).not.toContain('来源卡片');
+    expect(targets).not.toContain('其他条目');
+    h.close();
+    await rmSpace(d);
+  });
+});
+
+describe('收件箱只列未消化的', () => {
+  it('已归档的碎片不再出现在收件箱', async () => {
+    const d = await makeSpace({
+      ...MINI,
+      'inbox/2026-10-31-已归档的空采集.md': `---
+type: note
+title: 已归档的空采集
+status: seedling
+srcIds: []
+kind: point
+archivedAt: 2026-10-31T10:00:00+08:00
+createdAt: "2026-10-31T09:59:00+08:00"
+updatedAt: "2026-10-31T10:00:00+08:00"
+author: human
+sensitivity: private
+rev: 2
+---
+
+`,
+    });
+    const h = await Habitat.open(d, { fresh: true });
+    const titles = h.inbox().map((n) => n.title);
+    expect(titles).not.toContain('已归档的空采集');
+    expect(titles).toContain('剪藏：一段话');
+    h.close();
+    await rmSpace(d);
+  });
 });
 
 /* ---------------- B. 原件只读 ---------------- */

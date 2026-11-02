@@ -287,7 +287,9 @@ export class Habitat {
   inbox(): Note[] {
     return this.store
       .all<Note>('note')
-      .filter((n) => (this.store.file(n.id) ?? '').startsWith('inbox/'))
+      // 收件箱只列「还没消化」的：已经 archivedAt 的碎片清了但没删（不删除只归档），
+      // 留在 inbox/ 目录里继续出现在列表，就会变成永远消化不掉的一条。
+      .filter((n) => (this.store.file(n.id) ?? '').startsWith('inbox/') && !n.archivedAt)
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
   }
 
