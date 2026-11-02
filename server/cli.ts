@@ -296,7 +296,7 @@ async function main(): Promise<number> {
     case 'state': {
       const id = positional()[0];
       if (!id) return console.log('用法：habitat state <id>'), 1;
-      const got = await lifeViewOf(hab, id);
+      const got = await lifeViewOf(hab, id, { withStat: true });
       if (!got) return console.log(`对象不存在或不参与生命周期：${id}`), 1;
       const v = got.view;
       console.log(`${v.type} · ${v.stateName}（${v.state}）· 搁置 ${got.days} 天`);

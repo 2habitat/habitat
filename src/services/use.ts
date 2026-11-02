@@ -36,6 +36,9 @@ export function useTags() { return useQuery({ queryKey: qk.tags, queryFn: endpoi
 export function useGraph(limit = 200) { return useQuery({ queryKey: qk.graph, queryFn: () => endpoints.graph(limit) }); }
 export function useSearch(q: string, type?: string) { return useQuery({ queryKey: qk.search(q, type), queryFn: () => endpoints.search(q, type), enabled: q.trim().length > 0 }); }
 export function useJournal(q: Record<string, string> = {}) { return useQuery({ queryKey: qk.journal(q), queryFn: () => endpoints.journal(q) }); }
+export function useChangesSummary() {
+  return useQuery({ queryKey: [...qk.changes, 'summary'], queryFn: endpoints.changesSummary, staleTime: 15_000 });
+}
 export function useChanges() { return useQuery({ queryKey: qk.changes, queryFn: endpoints.changes }); }
 export function useProposals() { return useQuery({ queryKey: qk.proposals, queryFn: endpoints.proposals }); }
 export function useJobs() { return useQuery({ queryKey: qk.jobs, queryFn: endpoints.jobs }); }

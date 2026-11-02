@@ -76,12 +76,26 @@ function outboundOf(hab: Habitat, id: string): number {
 }
 
 /** 单个对象的完整视图（CLI / API 都走这里，不各写一份） */
-export async function lifeViewOf(hab: Habitat, id: string): Promise<{ view: LifeView; days: number } | null> {
+/**
+ * withStat：是否需要「文件多久没改」。
+ *
+ * 默认不需要——快照里用的闲置天数是 usage 记录的（谁碰过），不是 mtime。
+ * 之前每算一个对象就 stat 一次盘，186 个对象就是 186 次串行 IO，
+ * 实测让 /api/maintenance/brief 多花 88ms，而那个值根本没人读。
+ */
+export async function lifeViewOf(
+  hab: Habitat,
+  id: string,
+  opts: { withStat?: boolean } = {},
+): Promise<{ view: LifeView; days: number } | null> {
   const obj = hab.store.get(id);
   if (!obj) return null;
-  const rel = hab.store.file(id);
-  const st = rel ? await hab.store.adapter.stat(rel).catch(() => null) : null;
-  const days = st ? Math.floor((Date.now() - new Date(st.mtime).getTime()) / 86400_000) : 0;
+  let days = 0;
+  if (opts.withStat) {
+    const rel = hab.store.file(id);
+    const st = rel ? await hab.store.adapter.stat(rel).catch(() => null) : null;
+    days = st ? Math.floor((Date.now() - new Date(st.mtime).getTime()) / 86400_000) : 0;
+  }
 
   const extra: Partial<LifeFacts> = {
     inbound: inboundOf(hab, id),
@@ -90,7 +104,8 @@ export async function lifeViewOf(hab: Habitat, id: string): Promise<{ view: Life
 
   const t = (obj as unknown as { type: string }).type;
   if (t === 'note') {
-    const body = rel ? await hab.store.body(id).catch(() => '') : '';
+    // 笔记的正文本来就在内存里（Scan 时已解析），这里不会读盘
+    const body = await hab.store.body(id).catch(() => '');
     extra.bodyLength = body.length;
   }
   if (t === 'part') {

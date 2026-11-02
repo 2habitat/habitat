@@ -503,7 +503,26 @@ function asBuffer(body: unknown): Buffer | null {
     }
   });
 
-  app.get('/api/changes', async () => ({ changesets: await hab.changes.list() }));
+  /**
+   * 变更列表。
+   * ?summary=1 只回计数与最新时间——导航栏的角标只要这个，
+   * 传完整 changeset（含 base 内容快照）一次 20KB，没必要每页都拉。
+   */
+  app.get('/api/changes', async (req) => {
+    const q = req.query as { summary?: string };
+    const all = await hab.changes.list();
+    if (q.summary === '1') {
+      const pending = all.filter((c) => c.state === 'draft' || c.state === 'validated');
+      return {
+        summary: {
+          total: all.length,
+          pending: pending.length,
+          latestAt: all[0]?.createdAt ?? null,
+        },
+      };
+    }
+    return { changesets: all };
+  });
 
   /* ---------------- 语义化写操作 ---------------- */
 
@@ -1013,7 +1032,7 @@ function asBuffer(body: unknown): Buffer | null {
 
   app.get('/api/lifecycle/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const got = await lifeViewOf(hab, id);
+    const got = await lifeViewOf(hab, id, { withStat: true });
     if (!got) return reply.code(404).send({ error: `对象不存在或不参与生命周期：${id}` });
     return got;
   });

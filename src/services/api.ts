@@ -118,6 +118,8 @@ export const endpoints = {
   search: (q: string, type?: string) => api.get<SearchView>(`/api/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`),
   journal: (q: Record<string, string> = {}) =>
     api.get<{ events: JournalEventView[] }>(`/api/journal?${new URLSearchParams(q).toString()}`),
+  /** 只要计数：导航角标用，避免每页都拉 20KB 的完整变更集 */
+  changesSummary: () => api.get<{ summary: { total: number; pending: number; latestAt: string | null } }>('/api/changes?summary=1'),
   changes: () => api.get<{ changesets: ChangeSetView[] }>('/api/changes'),
   proposals: () => api.get<{ proposals: ProposalView[] }>('/api/proposals'),
   jobs: () => api.get<{ jobs: JobView[] }>('/api/jobs'),

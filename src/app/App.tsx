@@ -5,7 +5,7 @@ import { AiPanel, AiFab } from './AiPanel.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 import { Sheets } from './Sheets.tsx';
 import { Toasts, Spinner } from '../components/ui.tsx';
-import { useToday, useInbox, useChanges, useNotifications } from '../services/use.ts';
+import { useToday, useInbox, useChangesSummary, useNotifications } from '../services/use.ts';
 
 import { TodayPage, InboxPage, CalendarPage, ProjectsPage, AreasPage, ReviewPage } from '../domains/actions/pages.tsx';
 import { ShelfPage, ContinuePage, ComposePage } from '../domains/library/pages.tsx';
@@ -29,7 +29,7 @@ export function App() {
   const openAi = useUi((s) => s.openAi);
   const { data: today } = useToday();
   const { data: inbox } = useInbox();
-  const { data: changes } = useChanges();
+  const { data: changes } = useChangesSummary();
   const { data: notif } = useNotifications();
 
   useEffect(() => {
@@ -44,7 +44,7 @@ export function App() {
   const counts: Record<string, number> = {
     inbox: inbox?.notes.length ?? 0,
     today: (today?.actions.length ?? 0) + (today?.overdue.length ?? 0),
-    changes: (changes?.changesets ?? []).filter((c) => c.state === 'draft' || c.state === 'validated').length,
+    changes: changes?.summary.pending ?? 0,
   };
 
   // 手机底栏：四个去处 + 更多。助手是动作不是页面，单独处理。
