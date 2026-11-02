@@ -7,7 +7,9 @@ import { useUi } from '../../app/ui.ts';
 import { BatchBar, useBatch } from '../../components/batch.tsx';
 import { StewardCard } from './StewardCard.tsx';
 import { navigate } from '../../app/router.ts';
-import type { ActionView, EventView } from '../../services/api.ts';
+import type { ActionView } from '../../services/api.ts';
+import { buildMonth } from '../../../shared/calendar.ts';
+import type { Action, EventRec } from '../../../shared/types.ts';
 
 type ActivityAction = ActionView;
 
@@ -246,18 +248,15 @@ export function CalendarPage() {
   const refresh = useRefresh();
   const openSheet = useUi((s) => s.openSheet);
   const { data } = useObjects('event');
+  const { data: actData } = useObjects('action');
   const [y, m] = month.split('-').map(Number);
 
-  const events = (data?.objects ?? []) as unknown as EventView[];
-  const byDay = useMemo(() => {
-    const map = new Map<string, EventView[]>();
-    for (const e of events) {
-      const d = e.start.slice(0, 10);
-      if (!d.startsWith(month)) continue;
-      map.set(d, [...(map.get(d) ?? []), e]);
-    }
-    return map;
-  }, [events, month]);
+  const events = (data?.objects ?? []) as unknown as EventRec[];
+  const actions = (actData?.objects ?? []) as unknown as Action[];
+  // 日历 = 日程（event）+ 排了时段的任务（[at::]）+ 只标了到期的任务。
+  // 分组规则在 shared/calendar.ts，组件只管画。
+  const byDay = useMemo(() => buildMonth(month, events, actions), [events, actions, month]);
+  const total = [...byDay.values()].reduce((n, v) => n + v.blocks.length + v.due.length, 0);
 
   const first = new Date(y, m - 1, 1);
   const days = new Date(y, m, 0).getDate();
@@ -269,7 +268,7 @@ export function CalendarPage() {
     <div className="content-wide">
       <Card
         title="日程"
-        desc="安排 = 计划在这个时间段做"
+        desc="安排 = 计划在这个时间段做；到期任务也会标在日期里"
         actions={
           <>
             <button className="btn btn-sm" onClick={() => setMonth(shift(month, -1))}>←</button>
@@ -279,13 +278,21 @@ export function CalendarPage() {
           </>
         }
       >
+        <div className="row small muted" style={{ gap: 14, marginBottom: 8 }}>
+          <span><Chip tone="info">09:00</Chip> 日程</span>
+          <span><Chip tone="accent">14:00</Chip> 排期任务</span>
+          <span>
+            <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 9, background: 'var(--text-3)', marginRight: 5, verticalAlign: 'middle' }} />
+            仅到期
+          </span>
+        </div>
         <div className="grid" style={{ gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
           {['一', '二', '三', '四', '五', '六', '日'].map((d) => (
             <div key={d} className="small muted" style={{ textAlign: 'center', padding: 4 }}>{d}</div>
           ))}
           {cells.map((d, i) => {
             const key = d ? `${month}-${String(d).padStart(2, '0')}` : '';
-            const evs = byDay.get(key) ?? [];
+            const items = byDay.get(key) ?? { blocks: [], due: [] };
             const isToday = key === todayStr();
             return (
               <div
@@ -293,21 +300,32 @@ export function CalendarPage() {
                 onClick={() => d && openSheet('event', { date: key })}
                 data-testid={isToday ? 'cal-today' : undefined}
                 style={{
-                  minHeight: 78, padding: 6, borderRadius: 6, cursor: d ? 'pointer' : 'default',
+                  minHeight: 78, minWidth: 0, overflow: 'hidden', padding: 6, borderRadius: 6, cursor: d ? 'pointer' : 'default',
                   border: isToday ? '2px solid var(--accent)' : '1px solid var(--border)',
                   background: d ? 'var(--surface-2)' : 'transparent',
                 }}
               >
                 <div className="small muted">{d ?? ''}</div>
-                {evs.map((e) => (
-                  <div key={e.id} className="small ellipsis" style={{ marginTop: 2 }}>
-                    <Chip tone="info">{e.start.slice(11, 16)}</Chip> {e.title}
+                {items.blocks.map((b) => (
+                  <div key={b.id} className="small ellipsis" style={{ marginTop: 2 }} title={b.title} data-testid="cal-block">
+                    <Chip tone={b.kind === 'event' ? 'info' : 'accent'}>{b.allDay ? '全天' : b.start}</Chip> {b.title}
+                  </div>
+                ))}
+                {items.due.map((t) => (
+                  <div key={t.id} className="small ellipsis" style={{ marginTop: 2, color: 'var(--text-2)' }} title={t.title} data-testid="cal-due">
+                    <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 9, background: 'var(--text-3)', marginRight: 5, verticalAlign: 'middle' }} />
+                    {t.title}
                   </div>
                 ))}
               </div>
             );
           })}
         </div>
+        {total === 0 && (
+          <div className="small muted" style={{ marginTop: 10 }}>
+            这个月还没有安排。点格子加日程；任务的 [at:: 14:00-15:30] 写好之后，也会在这里占一个时间块。
+          </div>
+        )}
       </Card>
       <div className="row"><button className="btn btn-sm" onClick={() => refresh()}>刷新</button></div>
     </div>

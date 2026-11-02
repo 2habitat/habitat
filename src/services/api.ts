@@ -242,7 +242,8 @@ export interface TodayView {
   reading: { rep: { id: string; carrier: string; path: string }; title: string; pct: number }[];
 }
 export interface ActionView {
-  id: string; text: string; due?: string; flow: string; state: string; projectId?: string; rev: number;
+  id: string; text: string; due?: string; scheduled?: [string, string];
+  flow: string; state: string; projectId?: string; rev: number;
 }
 export interface EventView { id: string; title: string; start: string; end: string; projectId?: string }
 export interface ProjectView {

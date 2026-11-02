@@ -586,7 +586,7 @@ function asBuffer(body: unknown): Buffer | null {
   });
 
   app.post('/api/actions', async (req, reply) => {
-    const b = req.body as { text: string; due?: string; flow?: 'now' | 'next' | 'later'; projectId?: Id };
+    const b = req.body as { text: string; due?: string; scheduled?: [string, string]; flow?: 'now' | 'next' | 'later'; projectId?: Id };
     return wrap(async () => {
       const r = await hab.addAction({ ...b, actor: actorOf(b, req.headers) });
       await rescan([r.id]);

@@ -9,7 +9,7 @@ import { makeSpace, rmSpace, MINI, W1, D_TODAY, D_EVENT, MONTH_EVENT, day } from
 import { parseDoc } from '../../shared/frontmatter.ts';
 import { gatesOf, stageOf } from '../../shared/lifecycle.ts';
 import { tokenize, buildQuery } from '../../server/core/index.ts';
-import type { Note, Rep } from '../../shared/types.ts';
+import type { Note, Rep, Action } from '../../shared/types.ts';
 
 let dir: string;
 let hab: Habitat;
@@ -608,6 +608,23 @@ describe('行内语法：与现库 tasks.md 兼容', () => {
     expect(raw).toContain('^act-20261029-08');
     expect(raw).toContain('^act-20261029-09');
     expect(raw).toContain('一条普通备忘，不是任务。');
+  });
+
+  it('任务带时间块：解析成 scheduled，写回 [at::]，再读还在', async () => {
+    const r = await hab.addAction({
+      text: '写日历桥接',
+      due: D_TODAY,
+      scheduled: ['14:00', '15:30'],
+    });
+    await hab.rescan();
+    const a = hab.store.get<Action>(r.id)!;
+    expect(a.scheduled).toEqual(['14:00', '15:30']);
+    const raw = read('work/actions/tasks.md');
+    expect(raw).toContain('[at:: 14:00-15:30]');
+    expect(raw).toContain(`^${r.id}`);
+    // 再扫一遍：写回去的内容必须还能被读出来（否则界面重启就丢）
+    await hab.rescan();
+    expect(hab.store.get<Action>(r.id)!.scheduled).toEqual(['14:00', '15:30']);
   });
 
   it('日程按日期解析', () => {

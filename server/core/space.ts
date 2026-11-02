@@ -470,6 +470,8 @@ export class Habitat {
   async addAction(input: {
     text: string;
     due?: string;
+    /** 时间块 [开始, 结束]，对应行内 [at:: 14:00-15:30] */
+    scheduled?: [string, string];
     flow?: Action['flow'];
     projectId?: Id;
     actor?: Author;
@@ -486,6 +488,7 @@ export class Habitat {
       rev: 1,
       text: input.text,
       due: input.due,
+      scheduled: input.scheduled,
       flow: input.flow ?? (input.due ? 'next' : 'later'),
       state: 'open',
       projectId: input.projectId,

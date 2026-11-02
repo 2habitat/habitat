@@ -6,6 +6,7 @@ import { Sheet, Overlay, Field, Chip, Empty } from '../components/ui.tsx';
 import { navigate } from './router.ts';
 import { useNotifications } from '../services/use.ts';
 import { todayStr } from '../components/ui.tsx';
+import { parseScheduled } from '../../shared/time.ts';
 
 type Ctx = { onDone?: () => void };
 
@@ -206,14 +207,18 @@ function TaskSheet({ props }: { props: Record<string, unknown> }) {
   const close = useClose();
   const [text, setText] = useState(String(props.text ?? ''));
   const [due, setDue] = useState(String(props.due ?? ''));
+  const [at, setAt] = useState(String(props.at ?? ''));
   const [flow, setFlow] = useState<'now' | 'next' | 'later'>('next');
   const [busy, setBusy] = useState(false);
 
   async function submit() {
     if (!text.trim()) return toastFn('任务内容不能为空', 'err');
+    const scheduled = parseScheduled(at);
+    if (at.trim() && !scheduled) return toastFn('时间块要写成 14:00-15:30', 'err');
+    if (scheduled && !due) return toastFn('先填到期日——时间块要落在某一天', 'err');
     setBusy(true);
     try {
-      await endpoints.addAction({ text, due: due || undefined, flow, projectId: props.projectId ? String(props.projectId) : undefined });
+      await endpoints.addAction({ text, due: due || undefined, scheduled, flow, projectId: props.projectId ? String(props.projectId) : undefined });
       toastFn('已加入任务池', 'ok');
       close();
     } catch (e) {
@@ -226,7 +231,7 @@ function TaskSheet({ props }: { props: Record<string, unknown> }) {
   return (
     <Sheet
       title="新建任务"
-      desc="承诺(due)、安排(scheduled)、推进(flow) 是三件事，这里只填前两件"
+      desc="到期是承诺，安排是几点做"
       onClose={close}
       footer={
         <>
@@ -240,6 +245,9 @@ function TaskSheet({ props }: { props: Record<string, unknown> }) {
       </Field>
       <Field label="什么时候到期" hint="不填就没有承诺，只是「以后做」">
         <input className="input" type="date" value={due} onChange={(e) => setDue(e.target.value)} data-testid="task-due" />
+      </Field>
+      <Field label="安排在什么时候" hint="可选，写成 14:00-15:30；填了日历上才有时间块">
+        <input className="input" placeholder="14:00-15:30" value={at} onChange={(e) => setAt(e.target.value)} data-testid="task-at" />
       </Field>
       <Field label="推进节奏">
         <select className="select" value={flow} onChange={(e) => setFlow(e.target.value as never)}>

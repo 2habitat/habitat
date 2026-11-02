@@ -19,6 +19,7 @@ import { ingestMail } from './core/inbox-mail.ts';
 import { lifeViewOf, lifeSnapshot, renderNext } from './core/lifecycle.ts';
 import { renewPack, renderRenew, markReviewed, reviewOf } from './core/renew.ts';
 import { touch, flush } from './core/usage.ts';
+import { parseScheduled } from './core/inline.ts';
 import type { JournalOp } from '../shared/types.ts';
 import { nowISO } from '../shared/id.ts';
 
@@ -73,7 +74,7 @@ function usage(): string {
   habitat capture "标题" --body "内容"     采集
   habitat derive  --src <id> --title "…" --body "…"
   habitat annotate --rep <id> --quote "…" [--from 0] [--to 10]
-  habitat task "文本" [--due 2026-11-02] [--flow now|next|later] [--project <id>]   新建任务
+  habitat task "文本" [--due 2026-11-02] [--at 14:00-15:30] [--flow now|next|later] [--project <id>]   新建任务
   habitat event "标题" --date 2026-11-03 --start 14:00 [--end 15:00]  新建日程
   habitat inbox-mail [--fetch]             把发给自己的邮件收进收件箱（--fetch 才真收）
   habitat state <id>                       这个对象在哪一步、缺什么、下一步谁能推
@@ -263,8 +264,18 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'task': {
+      const at = parseScheduled(arg('at'));
+      if (arg('at') && !at) {
+        console.log('--at 的格式是 HH:MM-HH:MM，例如 --at 14:00-15:30');
+        return 1;
+      }
+      if (at && !arg('due')) {
+        console.log('--at 要和 --due 一起用：时间块得落在某一天');
+        return 1;
+      }
       const r = await hab.addAction({        text: positional()[0] ?? '未命名任务',
         due: arg('due'),
+        scheduled: at,
         flow: (arg('flow') as never) ?? undefined,
         // 任务挂项目：之前只能手拼 ops，命令里没有这个口子
         projectId: arg('project'),

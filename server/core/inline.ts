@@ -5,6 +5,9 @@
  * 新增的字段沿用同样的 [key:: value] 写法，未知 key 原样保留。
  */
 import type { Action, EventRec } from '../../shared/types.ts';
+import { parseScheduled } from '../../shared/time.ts';
+
+export { parseScheduled };
 
 export interface InlineBlock {
   kind: 'heading' | 'text' | 'task' | 'event';
@@ -70,6 +73,8 @@ export function blockToAction(b: InlineBlock, defaults: Omit<Action, 'text' | 's
     state: b.done ? 'done' : (f.state as Action['state']) ?? 'open',
     flow: (f.flow as Action['flow']) ?? (f.due ? 'next' : 'later'),
     due: f.due,
+    // 可选时间块：老任务没有这一项，读出来是 undefined，不显示块
+    scheduled: parseScheduled(f.at),
     projectId: f.project,
     // 归档标记必须能被读回来，否则「归档」重启后就失效了
     archivedAt: f.archived,
@@ -86,6 +91,7 @@ function putFields(fields: Record<string, string>): string {
 export function renderTask(a: Action, extra: Record<string, string> = {}): string {
   const fields: Record<string, string> = { ...extra };
   if (a.due) fields.due = a.due;
+  if (a.scheduled) fields.at = `${a.scheduled[0]}-${a.scheduled[1]}`;
   if (a.projectId) fields.project = a.projectId;
   if (a.flow && a.flow !== 'next') fields.flow = a.flow;
   if (a.state !== 'open' && a.state !== 'done') fields.state = a.state;
