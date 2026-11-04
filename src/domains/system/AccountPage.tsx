@@ -5,7 +5,7 @@
  * 当前这台设备不掉线，其它设备上的旧会话全部作废。
  */
 import { useState, type FormEvent } from 'react';
-import { Card, Chip, Bar, Field, Spinner, ErrorBox, Empty } from '../../components/ui.tsx';
+import { Card, PageHead, Chip, Bar, Field, Spinner, ErrorBox, Empty } from '../../components/ui.tsx';
 import { useMe, useAuthUsers } from '../../services/use.ts';
 import { endpoints, ApiError, type AccountUser } from '../../services/api.ts';
 import { passwordStrength } from '../../../shared/password.ts';
@@ -160,19 +160,18 @@ export function AccountPage() {
 
   return (
     <div className="content-wide">
-      <div className="page-head" style={{ marginBottom: 12 }}>
-        <div>
-          <h2 style={{ margin: 0 }}>账号与登录</h2>
-          <div className="small muted">人用密码，脚本用令牌；两条路互不影响。</div>
-        </div>
-      </div>
+      <PageHead
+        eyebrow="系统 · 账号"
+        title="账号与登录"
+        lede="人用密码，脚本用令牌；两条路互不影响。会话是签名的 Cookie，改密后其它设备需要重新登录。"
+        actions={me.user ? <button className="btn btn-sm btn-quiet" onClick={() => void logout()}>退出登录</button> : undefined}
+      />
 
       {me.change?.required ? (
-        <div className="card" style={{ borderColor: 'var(--danger)', marginBottom: 12 }}>
-          <strong style={{ color: 'var(--danger)' }}>{me.change.message}</strong>
-          <div style={{ marginTop: 8 }}>
-            <a className="btn btn-sm btn-primary" href="/change-password">去改密码</a>
-          </div>
+        <div className="notice" data-tone="danger" style={{ marginTop: 'var(--sp-5)' }}>
+          <strong>{me.change.message}</strong>
+          <span className="spacer" />
+          <a className="btn btn-sm btn-primary" href="/change-password">去改密码</a>
         </div>
       ) : null}
 
@@ -195,27 +194,27 @@ export function AccountPage() {
       ) : (
         <>
           <Card title="当前账号" desc={`${me.user.username} · ${me.user.role === 'owner' ? 'owner（可管理账号）' : 'member'}`}>
-            <div className="grid grid-2">
-              <div><span className="small muted">用户名</span><div className="mono">{me.user.username}</div></div>
-              <div><span className="small muted">显示名</span><div>{me.user.displayName ?? '—'}</div></div>
-              <div><span className="small muted">上次登录</span><div className="small">{fmtTime(me.user.lastLoginAt)}{me.user.lastLoginIp ? ` · ${me.user.lastLoginIp}` : ''}</div></div>
-              <div><span className="small muted">密码更新</span><div className="small">{fmtTime(me.user.passwordUpdatedAt)}</div></div>
+            <dl className="kv">
+              <div><dt>用户名</dt><dd className="mono">{me.user.username}</dd></div>
+              <div><dt>显示名</dt><dd>{me.user.displayName ?? '—'}</dd></div>
+              <div><dt>上次登录</dt><dd className="small">{fmtTime(me.user.lastLoginAt)}{me.user.lastLoginIp ? ` · ${me.user.lastLoginIp}` : ''}</dd></div>
+              <div><dt>密码更新</dt><dd className="small">{fmtTime(me.user.passwordUpdatedAt)}</dd></div>
               <div>
-                <span className="small muted">密码状态</span>
-                <div style={{ marginTop: 3 }}>
+                <dt>密码状态</dt>
+                <dd>
                   {me.user.mustChangePassword
                     ? <Chip tone="warn">待修改</Chip>
                     : me.user.change.required
                       ? <Chip tone="warn">已过期</Chip>
                       : <Chip tone="ok">正常</Chip>}
                   <span className="small muted" style={{ marginLeft: 8 }}>{me.user.change.message}</span>
-                </div>
+                </dd>
               </div>
               <div>
-                <span className="small muted">会话</span>
-                <div style={{ marginTop: 3 }}><button className="btn btn-sm" onClick={() => void logout()}>退出登录</button></div>
+                <dt>会话</dt>
+                <dd><button className="btn btn-sm btn-quiet" onClick={() => void logout()}>退出登录</button></dd>
               </div>
-            </div>
+            </dl>
           </Card>
 
           <Card title="修改密码" desc="改完立即生效；其它设备需要重新登录">

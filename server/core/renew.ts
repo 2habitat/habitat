@@ -74,6 +74,33 @@ export async function reviewOf(hab: Habitat, id: string): Promise<ReviewRec | un
   return (await loadReview(hab))[id];
 }
 
+export interface DueReview {
+  id: string;
+  title: string;
+  idleDays: number;
+  /** 上次复核时排的下次时间；从未复核过则没有 */
+  due?: string;
+}
+
+/**
+ * 到期复核队列：活性上「冷掉或结灰」且（从未复核 或 已到期）的对象。
+ * 之前这段逻辑只写在 CLI 里，服务端和 harness 各自抄一遍就会漂；
+ * 现在只有这一份，CLI、/api/loops、手册都用它。
+ */
+export async function reviewQueue(hab: Habitat): Promise<DueReview[]> {
+  const { lifeSnapshot } = await import('./lifecycle.ts');
+  const snap = await lifeSnapshot(hab);
+  const map = await loadReview(hab);
+  const now = Date.now();
+  const out: DueReview[] = [];
+  for (const x of snap.refresh) {
+    const rv = map[x.id];
+    if (rv && Date.parse(rv.due) > now) continue;
+    out.push({ id: x.id, title: x.title, idleDays: x.idleDays, due: rv?.due });
+  }
+  return out;
+}
+
 /* ---------------- 冲突召回（确定性，不需要模型） ---------------- */
 
 /** 只在结论里出现的转折词：出现这些，说明作者自己就在推翻/限定某个说法 */

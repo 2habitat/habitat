@@ -1,6 +1,8 @@
 /** AI 域：变更与作业必须可见，否则 AI 就是在背后偷偷改 */
 import { useState } from 'react';
-import { Card, Chip, Empty, Spinner, ErrorBox, Field, Bar } from '../../components/ui.tsx';
+import { Card, PageHead, Chip, Empty, Spinner, PageSkeleton, ErrorBox, Field, Bar } from '../../components/ui.tsx';
+import { Icon } from '../../components/icons.tsx';
+import { CHANGE_STATE, JOB_STATE } from '../../app/labels.ts';
 import { useChanges, useProposals, useJobs, useFlow, useRefresh, useManifest } from '../../services/use.ts';
 import { endpoints, ApiError, type ChangeSetView } from '../../services/api.ts';
 import { useUi } from '../../app/ui.ts';
@@ -21,54 +23,88 @@ export function AssistantPage() {
   const openAi = useUi((s) => s.openAi);
   const openSheet = useUi((s) => s.openSheet);
 
+  const entries = [
+    { icon: 'assistant' as const, title: '页内助手', desc: '右下角唤出。带入当前对象，回答必须带依据；检索为空就直说。', action: () => openAi(), cta: '现在问' },
+    { icon: 'jobs' as const, title: '协作中心', desc: '多步目标走「作业」，有检查点，中断了能续。等待不是失败。', action: () => navigate('jobs'), cta: '看作业' },
+    { icon: 'automation' as const, title: '自动化', desc: '定时扫描、生成候选。每天默认不超过 3 条提案。', action: () => navigate('automation'), cta: '看规则' },
+  ];
+
+  const tiers = [
+    { no: '01', tone: 'ok', title: '派生自动', desc: '建索引、去重、解析链接 —— 不改语义，直接做' },
+    { no: '02', tone: 'info', title: '授权内新增', desc: '元数据草稿、摘要候选 —— 新增，不覆盖' },
+    { no: '03', tone: 'warn', title: '改语义逐条确认', desc: '改结论、合并、归档 —— 必须你一条条点' },
+    { no: '04', tone: 'danger', title: '外部副作用禁止', desc: '外发、支付、删除 —— 一律不做' },
+  ];
+
   return (
     <div className="content-wide">
-      <Card
+      <PageHead
+        eyebrow="AI · 助手"
         title="助手"
-        desc="三个入口，一套权限：页内助手看当前对象，协作中心跑多步目标，自动化按规则触发"
+        lede="三个入口，一套权限：页内助手看当前对象，协作中心跑多步目标，自动化按规则触发。它只能提案，改语义要你点头。"
         actions={<button className="btn btn-sm btn-primary" onClick={() => openAi()} data-testid="assistant-open">唤起助手面板</button>}
-      >
-        <div className="grid grid-3">
-          <div className="card">
-            <strong>页内助手</strong>
-            <div className="small muted">右下角 ✦ 唤出。带入当前对象，回答必须带依据。</div>
-          </div>
-          <div className="card">
-            <strong>协作中心</strong>
-            <div className="small muted">多步目标走「作业」，有检查点，等待不是失败。</div>
-            <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => navigate('jobs')}>看作业</button>
-          </div>
-          <div className="card">
-            <strong>自动化</strong>
-            <div className="small muted">定时扫描、生成候选。每天默认不超过 3 条提案。</div>
-            <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => navigate('automation')}>看规则</button>
-          </div>
-        </div>
-      </Card>
+      />
 
-      <Card title="权限四档" desc="AI 能做什么，写在这里，不靠猜">
-        <ul>
-          <li><strong>派生自动</strong>：建立索引、去重、解析链接 —— 不改语义，直接做。</li>
-          <li><strong>授权内新增</strong>：元数据草稿、摘要候选 —— 新增，不覆盖。</li>
-          <li><strong>改语义逐条确认</strong>：改结论、合并、归档 —— 必须你一条条点。</li>
-          <li><strong>外部副作用禁止</strong>：外发、支付、删除 —— 一律不做。</li>
-        </ul>
-      </Card>
-
-      <Card title="能力清单" desc="清单是唯一事实，AGENTS.md 只是人读的版本">
-        {(data?.manifest.capabilities ?? []).map((c) => (
-          <div key={c.id} className="row" style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-            <Chip tone={c.mutating ? 'warn' : 'ok'}>{c.mutating ? '会写' : '只读'}</Chip>
-            <strong style={{ width: 90 }}>{c.name}</strong>
-            <span className="small muted ellipsis" style={{ flex: 1 }}>{c.agent}</span>
-            <span className="small muted nowrap">{c.event}</span>
-          </div>
+      <div className="mode-grid">
+        {entries.map((e) => (
+          <button key={e.title} className="mode-card" onClick={e.action}>
+            <span className="mode-icon"><Icon name={e.icon} size={18} /></span>
+            <strong>{e.title}</strong>
+            <span className="mode-desc">{e.desc}</span>
+            <span className="mode-cta">{e.cta} <Icon name="arrow" size={12} /></span>
+          </button>
         ))}
-      </Card>
+      </div>
 
-      <Card title="生成一条提案" desc="AI 不直接写正文，先产出提案给你确认">
-        <button className="btn" onClick={() => openSheet('proposal', { title: '批量补充状态' })} data-testid="assistant-propose">生成提案</button>
-      </Card>
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">01</span>
+          权限四档
+          <span className="rubric-rule" />
+          <span className="rubric-meta">写在这里，不靠猜</span>
+        </h2>
+        <div className="tiers">
+          {tiers.map((t) => (
+            <div key={t.no} className="tier" data-tone={t.tone}>
+              <span className="tier-no">{t.no}</span>
+              <strong>{t.title}</strong>
+              <span className="tier-desc">{t.desc}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">02</span>
+          能力清单
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{data?.manifest.capabilities.length ?? 0} 项</span>
+        </h2>
+        <p className="section-note">清单是唯一事实，AGENTS.md 只是人读的版本。</p>
+        <div className="caps">
+          {(data?.manifest.capabilities ?? []).map((c) => (
+            <div key={c.id} className="cap">
+              <span className="cap-flag" data-write={c.mutating ? '1' : '0'}>{c.mutating ? '会写' : '只读'}</span>
+              <span className="cap-name mono">{c.name}</span>
+              <span className="cap-agent ellipsis">{c.agent}</span>
+              <span className="cap-event mono">{c.event}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">03</span>
+          生成一条提案
+          <span className="rubric-rule" />
+        </h2>
+        <p className="section-note">AI 不直接写正文 —— 先产出提案，你逐条确认后才落盘。一天默认 3 条上限。</p>
+        <button className="btn" style={{ marginTop: 12 }} onClick={() => openSheet('proposal', { title: '批量补充状态' })} data-testid="assistant-propose">
+          生成提案
+        </button>
+      </section>
     </div>
   );
 }
@@ -79,9 +115,14 @@ export function ChangesPage() {
   const [tab, setTab] = useState<'changes' | 'flow'>('changes');
   return (
     <div className="content-wide">
-      <div className="tabs" role="tablist">
-        <button className="tab" role="tab" aria-selected={tab === 'changes'} onClick={() => setTab('changes')} data-testid="tab-changes">变更</button>
-        <button className="tab" role="tab" aria-selected={tab === 'flow'} onClick={() => setTab('flow')} data-testid="tab-flow">流转（生命周期）</button>
+      <PageHead
+        eyebrow="AI · 变更"
+        title="变更"
+        lede="一张卡片 = 一次事务：做什么 / 为什么 / 影响 / 差异 / 四项校验 / 提交 / 撤销。所有写操作都先变成变更，提交后才落盘。"
+      />
+      <div className="tabs" role="tablist" style={{ marginTop: 'var(--sp-5)' }}>
+        <button className="tab" role="tab" aria-selected={tab === 'changes'} onClick={() => setTab('changes')} data-testid="tab-changes">变更记录</button>
+        <button className="tab" role="tab" aria-selected={tab === 'flow'} onClick={() => setTab('flow')} data-testid="tab-flow">生命周期</button>
       </div>
       {tab === 'changes' ? <ChangesList /> : <FlowBoard />}
     </div>
@@ -166,27 +207,30 @@ function ChangesList() {
   const list = data?.changesets ?? [];
   return (
     <>
-      <Card title="变更" desc="一张卡片 = 一次事务：做什么 / 为什么 / 影响 / 差异 / 四项校验 / 提交 / 撤销">
+      <Card data-testid="changes-list">
         {list.length === 0
-          ? <Empty title="还没有变更" desc="所有写操作都会先变成一条变更，提交后才落盘" />
+          ? <Empty title="还没有变更" desc="所有写操作都会先变成一条变更，提交后才落盘。这里是账本，不是日志。" />
           : list.map((cs) => <ChangeCard key={cs.id} cs={cs} busy={busy === cs.id} onValidate={() => void validate(cs)} onCommit={() => void commit(cs)} onRevert={() => void revert(cs)} />)}
       </Card>
 
-      <Card title="提案" desc="AI 提的，等人逐条确认">
+      <Card title="提案" desc="AI 提的，等人逐条确认。没有确认这一步，它就只能读">
         {!(props?.proposals ?? []).length
           ? <Empty title="没有待处理的提案" />
           : (props?.proposals ?? []).map((p) => (
-            <div key={p.id} className="card" style={{ marginBottom: 8 }}>
-              <div className="row">
-                <strong>{p.title}</strong>
-                <Chip tone={p.state === 'applied' ? 'ok' : p.state === 'rejected' ? 'danger' : 'warn'}>{p.state}</Chip>
-                <Chip>{p.risk}</Chip>
-                <Chip>¥{p.budgetCny ?? 0}</Chip>
-                <span className="spacer" />
-                <button className="btn btn-sm" onClick={() => void apply(p)} disabled={p.state === 'applied'} data-testid="proposal-apply">应用</button>
+            <div key={p.id} className="entry">
+              <div className="entry-main">
+                <div className="entry-title">
+                  <h3>{p.title}</h3>
+                  <Chip tone={p.state === 'applied' ? 'ok' : p.state === 'rejected' ? 'danger' : 'warn'}>{p.state}</Chip>
+                  <Chip>{p.risk}</Chip>
+                  <Chip>¥{p.budgetCny ?? 0}</Chip>
+                </div>
+                {p.rationale && <p className="entry-desc">{p.rationale}</p>}
+                <div className="entry-meta">影响范围：{p.scope || '（未填写）'} · 依据 {p.evidence?.length ?? 0} 条</div>
               </div>
-              {p.rationale && <div className="small muted" style={{ marginTop: 4 }}>{p.rationale}</div>}
-              <div className="small" style={{ marginTop: 4 }}>影响范围：{p.scope || '（未填写）'} · 依据 {p.evidence?.length ?? 0} 条</div>
+              <div className="entry-side">
+                <button className="btn btn-sm btn-primary" onClick={() => void apply(p)} disabled={p.state === 'applied'} data-testid="proposal-apply">应用</button>
+              </div>
             </div>
           ))}
       </Card>
@@ -199,64 +243,63 @@ function ChangeCard({ cs, busy, onValidate, onCommit, onRevert }: {
 }) {
   const [showDiff, setShowDiff] = useState(false);
   const snap = cs.snapshot ? Object.entries(cs.snapshot)[0] : null;
-  const stateTone = cs.state === 'committed' ? 'ok' : cs.state === 'conflict' ? 'danger' : cs.state === 'reverted' ? 'warn' : '';
+  const ok = cs.checks?.every((c) => c.ok);
 
   return (
-    <div className="card" style={{ marginBottom: 10 }} data-testid="changeset-card">
-      <div className="row">
-        <strong className="ellipsis">{cs.reason || '（没写原因）'}</strong>
-        <Chip tone={stateTone}>{cs.state}</Chip>
-        <Chip>{cs.author === 'human' ? '我' : cs.author}</Chip>
-        <span className="spacer" />
-        <span className="small muted">{cs.createdAt.slice(0, 16)}</span>
-      </div>
+    <article className="chg" data-testid="changeset-card" data-state={cs.state}>
+      <span className="chg-rail" aria-hidden="true" />
+      <div className="chg-main">
+        <header className="chg-head">
+          <span className="chg-state" data-state={cs.state}>{CHANGE_STATE[cs.state] ?? cs.state}</span>
+          <h3 className="chg-reason ellipsis">{cs.reason || '（没写原因）'}</h3>
+          <span className="chg-meta mono">{cs.author === 'human' ? '我' : cs.author} · {cs.createdAt.slice(5, 16).replace('T', ' ')}</span>
+        </header>
 
-      <div className="small" style={{ marginTop: 6 }}>
-        做什么：{cs.ops.map((o) => opLabel(o)).join('；')}
-      </div>
-      <div className="small muted">影响：{Object.keys(cs.baseRevisions).length} 个对象</div>
+        <div className="chg-ops">{cs.ops.map((o) => opLabel(o)).join('；')}</div>
 
-      {cs.checks && (
-        <div style={{ marginTop: 6 }} data-testid="checks">
-          {cs.checks.map((c) => (
-            <div key={c.name} className="check-row">
-              <span className="check-mark">{c.ok ? (c.level === 'warn' ? '⚠' : '✓') : '✕'}</span>
-              <strong>{c.label}</strong>
-              <span className="small muted" style={{ flex: 1 }}>{c.detail}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {snap && (
-        <div style={{ marginTop: 6 }}>
-          <button className="btn btn-sm btn-ghost" onClick={() => setShowDiff((v) => !v)} data-testid="toggle-diff">
-            {showDiff ? '收起差异' : '看差异'}
-          </button>
-          {showDiff && (
-            <div className="diff" style={{ marginTop: 6 }}>
-              {snap[1].base.split('\n').slice(0, 40).map((l, i) => (
-                <div key={i} className="diff-del">- {l}</div>
+        <div className="chg-facts">
+          <span><b>{Object.keys(cs.baseRevisions).length}</b> 个对象受影响</span>
+          {cs.checks && (
+            <span className="chg-checks" data-testid="checks">
+              {cs.checks.map((c) => (
+                <span key={c.name} className="chg-check" data-ok={c.ok ? '1' : '0'} title={c.detail}>
+                  <Icon name={c.ok ? 'check' : 'close'} size={12} />
+                  {c.label}
+                </span>
               ))}
-              {snap[1].mine.split('\n').slice(0, 40).map((l, i) => (
-                <div key={i} className="diff-add">+ {l}</div>
-              ))}
-            </div>
+            </span>
           )}
         </div>
-      )}
 
-      <div className="row" style={{ marginTop: 8 }}>
-        <button className="btn btn-sm" onClick={onValidate} disabled={busy} data-testid="cs-validate">校验</button>
-        {cs.state !== 'committed' && cs.state !== 'reverted' && (
-          <button className="btn btn-sm btn-primary" onClick={onCommit} disabled={busy} data-testid="cs-commit">提交</button>
+        {snap && showDiff && (
+          <div className="diff" style={{ marginTop: 10 }}>
+            {snap[1].base.split('\n').slice(0, 40).map((l, i) => (
+              <div key={i} className="diff-del">- {l}</div>
+            ))}
+            {snap[1].mine.split('\n').slice(0, 40).map((l, i) => (
+              <div key={i} className="diff-add">+ {l}</div>
+            ))}
+          </div>
         )}
-        {cs.state === 'committed' && (
-          <button className="btn btn-sm btn-danger" onClick={onRevert} disabled={busy} data-testid="cs-revert">撤销</button>
-        )}
-        {busy && <span className="spin" />}
+
+        <footer className="chg-foot">
+          {snap && (
+            <button className="btn btn-sm btn-quiet" onClick={() => setShowDiff((v) => !v)} data-testid="toggle-diff">
+              {showDiff ? '收起差异' : '看差异'}
+            </button>
+          )}
+          <span className="spacer" />
+          <button className="btn btn-sm btn-quiet" onClick={onValidate} disabled={busy} data-testid="cs-validate">重新校验</button>
+          {cs.state !== 'committed' && cs.state !== 'reverted' && (
+            <button className="btn btn-sm btn-primary" onClick={onCommit} disabled={busy || ok === false} data-testid="cs-commit">提交</button>
+          )}
+          {cs.state === 'committed' && (
+            <button className="btn btn-sm btn-danger" onClick={onRevert} disabled={busy} data-testid="cs-revert">撤销</button>
+          )}
+          {busy && <span className="spin" />}
+        </footer>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -278,43 +321,58 @@ function FlowBoard() {
   const { data, isLoading } = useFlow();
   const openSheet = useUi((s) => s.openSheet);
   const openAi = useUi((s) => s.openAi);
-  if (isLoading) return <Spinner />;
+  if (isLoading) return <PageSkeleton rows={3} title={false} />;
 
   return (
     <>
-      <Card title="流转" desc="五道闸门是算出来的，不是手打的标签。卡片停在哪个格子，就是真实进度">
+      <section className="section" style={{ marginTop: 0 }}>
+        <h2 className="rubric">
+          <span className="rubric-no">01</span>
+          五道闸门
+          <span className="rubric-rule" />
+          <span className="rubric-meta">算出来的，不是手打的标签</span>
+        </h2>
         <div className="kanban" data-testid="kanban">
-          {STAGES.map((s) => {
+          {STAGES.map((s, i) => {
             const cards = data?.byStage[s.key] ?? [];
             return (
               <div key={s.key} className="kanban-col" data-testid={`kanban-${s.key}`}>
                 <div className="kanban-head">
-                  <strong>{s.name}</strong>
-                  <span className="small muted">{cards.length}</span>
+                  <span className="kanban-no">{String(i + 1).padStart(2, '0')}</span>
+                  <span>{s.name}</span>
+                  <span className="kanban-n">{cards.length}</span>
                 </div>
-                <div className="small muted" style={{ marginBottom: 6 }}>{s.hint}</div>
+                <div className="kanban-hint">{s.hint}</div>
                 {cards.map((c) => (
                   <div key={c.id} className="kanban-card">
-                    <div className="ellipsis"><strong>{c.title}</strong></div>
+                    <div className="ellipsis" style={{ fontWeight: 600 }}>{c.title}</div>
                     <div className="small muted">读 {Math.round(c.readPct * 100)}% · 衍生 {c.derived}</div>
                   </div>
                 ))}
+                {cards.length === 0 && <div className="kanban-empty">空</div>}
               </div>
             );
           })}
         </div>
-      </Card>
+      </section>
 
-      <Card title="卡住的" desc="每一样都给出「下一步做什么」，不是空话">
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">02</span>
+          卡住的
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{data?.stuck.length ?? 0} 条</span>
+        </h2>
+        <p className="section-note">每一样都给出「下一步做什么」，不是空话。</p>
         {!data?.stuck.length
-          ? <Empty title="没有卡住的条目" />
+          ? <Empty title="没有卡住的条目" desc="所有在跑的东西都有明确的下一步。" />
           : data.stuck.map((c) => (
-            <div key={c.id} className="row" style={{ padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-              <Chip>{c.kind}</Chip>
-              <span className="ellipsis" style={{ flex: 1 }}>{c.title}</span>
+            <div key={c.id} className="part" style={{ padding: '10px 0' }}>
+              <span className="hit-type">{c.kind}</span>
+              <span className="part-title ellipsis">{c.title}</span>
               <span className="small muted">卡在「{STAGES.find((s) => s.key === c.next?.key)?.name}」：{c.next?.text}</span>
               <button
-                className="btn btn-sm"
+                className="btn btn-sm btn-quiet"
                 data-testid="flow-advance"
                 onClick={() => {
                   if (c.next?.key === 'review') openSheet('review', { id: c.id, title: c.title });
@@ -323,10 +381,11 @@ function FlowBoard() {
                 }}
               >
                 推进
+                <Icon name="arrow" size={12} />
               </button>
             </div>
           ))}
-      </Card>
+      </section>
     </>
   );
 }
@@ -387,50 +446,67 @@ export function JobsPage() {
 
   return (
     <div className="content-wide">
-      <Card
+      <PageHead
+        eyebrow="AI · 作业"
         title="作业"
-        desc="作业是长流程，不是一次请求：queued → running → waiting-approval → done。等待不是失败"
-        actions={<button className="btn btn-sm btn-primary" onClick={() => void create()} disabled={busy === 'new'} data-testid="job-create">跑一次演示作业</button>}
-      >
-        {isLoading ? <Spinner /> : jobs.length === 0
-          ? <Empty title="还没有作业" desc="作业会留下检查点，中断了能从检查点继续，不重复副作用" />
-          : jobs.map((j) => (
-            <div key={j.id} className="card" style={{ marginBottom: 8 }} data-testid="job-card">
-              <div className="row">
-                <strong>{j.name}</strong>
-                <Chip tone={j.state === 'done' ? 'ok' : j.state === 'waiting-approval' ? 'warn' : j.state === 'failed' ? 'danger' : 'info'} data-testid="job-state">{j.state}</Chip>
-                <span className="spacer" />
-                <span className="small muted">检查点：{j.checkpoint}</span>
-                {j.state !== 'done' && j.state !== 'failed' && (
-                  <button className="btn btn-sm" onClick={() => void advance(j.id)} disabled={busy === j.id} data-testid="job-advance">
-                    {j.state === 'waiting-approval' ? '确认并继续' : '推进一步'}
-                  </button>
-                )}
-                {j.state !== 'done' && j.state !== 'failed' && (
-                  <button className="btn btn-sm btn-ghost" onClick={() => void markFail(j)} disabled={busy === j.id} data-testid="job-fail">记为失败</button>
-                )}
-              </div>
-              {j.waitingReason && <div className="small" style={{ marginTop: 4, color: 'var(--warn)' }} data-testid="job-wait-reason">等待原因：{j.waitingReason}</div>}
-              {(j.attempts || j.lastError) && (
-                <div className="small" style={{ marginTop: 4, color: j.state === 'failed' ? 'var(--danger)' : 'var(--warn)' }} data-testid="job-retry">
-                  失败 {j.attempts ?? 0} 次{j.lastError ? `：${j.lastError}` : ''}
-                  {j.nextTryAt ? ` · 退避到 ${String(j.nextTryAt).slice(11, 16)} 再试` : ''}
-                  {j.state === 'failed' ? ' · 已判永久失败，不再自动重试' : ''}
+        lede="作业是长流程，不是一次请求：排队 → 执行 → 待人确认 → 完成。等待不是失败，但也不能被绕过。"
+        actions={
+          <button className="btn btn-sm btn-primary" onClick={() => void create()} disabled={busy === 'new'} data-testid="job-create">
+            <Icon name="plus" size={13} />
+            跑一次演示作业
+          </button>
+        }
+      />
+
+      {isLoading ? <PageSkeleton rows={3} title={false} /> : jobs.length === 0
+        ? <Empty title="还没有作业" desc="作业会留下检查点，中断了能从检查点继续，不重复副作用。" />
+        : (
+          <div className="stagger">
+            {jobs.map((j) => (
+              <article key={j.id} className="job" data-state={j.state} data-testid="job-card">
+                <header className="job-head">
+                  <span className="job-zh" data-state={j.state}>{JOB_STATE[j.state] ?? j.state}</span>
+                  <span className="job-state mono" data-testid="job-state">{j.state}</span>
+                  <h3 className="job-name ellipsis">{j.name}</h3>
+                  <span className="mono muted">{String(j.updatedAt ?? "").slice(5, 16).replace("T", " ")}</span>
+                </header>
+
+                <div className="job-steps">
+                  {j.steps.map((s, i) => (
+                    <span key={i} className="job-step" data-done={s.state === 'done' ? '1' : '0'}>
+                      <i className="job-dot" aria-hidden="true" />
+                      {s.name}
+                    </span>
+                  ))}
                 </div>
-              )}
-              <div className="row" style={{ marginTop: 8 }}>
-                {j.steps.map((s, i) => (
-                  <span key={i} className="row small">
-                    <Chip tone={s.state === 'done' ? 'ok' : ''}>{s.state === 'done' ? '✓' : '·'} {s.name}</Chip>
-                  </span>
-                ))}
-              </div>
-              <div className="small muted" style={{ marginTop: 6 }}>
-                幂等键：{j.idempotencyKey}（同一把钥匙不会重复排队）
-              </div>
-            </div>
-          ))}
-      </Card>
+
+                {j.waitingReason && (
+                  <div className="job-note" data-tone="warn" data-testid="job-wait-reason">等待原因：{j.waitingReason}</div>
+                )}
+                {(j.attempts || j.lastError) && (
+                  <div className="job-note" data-tone={j.state === 'failed' ? 'danger' : 'warn'} data-testid="job-retry">
+                    失败 {j.attempts ?? 0} 次{j.lastError ? `：${j.lastError}` : ''}
+                    {j.nextTryAt ? ` · 退避到 ${String(j.nextTryAt).slice(11, 16)} 再试` : ''}
+                    {j.state === 'failed' ? ' · 已判永久失败，不再自动重试' : ''}
+                  </div>
+                )}
+
+                <footer className="job-foot">
+                  <span className="job-keys mono">检查点 {j.checkpoint} · 幂等键 {j.idempotencyKey}</span>
+                  <span className="spacer" />
+                  {j.state !== 'done' && j.state !== 'failed' && (
+                    <button className="btn btn-sm btn-quiet" onClick={() => void markFail(j)} disabled={busy === j.id} data-testid="job-fail">记为失败</button>
+                  )}
+                  {j.state !== 'done' && j.state !== 'failed' && (
+                    <button className="btn btn-sm btn-primary" onClick={() => void advance(j.id)} disabled={busy === j.id} data-testid="job-advance">
+                      {j.state === 'waiting-approval' ? '确认并继续' : '推进一步'}
+                    </button>
+                  )}
+                </footer>
+              </article>
+            ))}
+          </div>
+        )}
     </div>
   );
 }
@@ -491,53 +567,95 @@ export function AutomationPage() {
 
   return (
     <div className="content-wide">
-      <Card
+      <PageHead
+        eyebrow="AI · 自动化"
         title="自动化"
-        desc="服务每 5 分钟评估一次；只产出通知，不自动改正文。同一规则每天最多提醒一次"
-        actions={<button className="btn btn-sm" onClick={() => void runNow()} disabled={running} data-testid="rules-run">现在跑一次</button>}
-      >
+        lede="服务每 5 分钟评估一次；只产出通知，不自动改正文。同一规则每天最多提醒一次。"
+        actions={
+          <button className="btn btn-sm btn-primary" onClick={() => void runNow()} disabled={running} data-testid="rules-run">
+            {running ? '评估中…' : '现在跑一次'}
+          </button>
+        }
+      />
+
+      <section className="section" style={{ marginTop: 'var(--sp-5)' }}>
+        <h2 className="rubric">
+          <span className="rubric-no">01</span>
+          规则
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{rules.filter((r) => r.enabled).length} 条在跑</span>
+        </h2>
         {rules.length === 0
-          ? <Empty title="还没有规则" desc="规则只会产出提案，不会直接改正文" />
-          : rules.map((r) => (
-            <div key={r.id} className="row row-wrap" style={{ padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-              <strong style={{ width: 160 }} className="ellipsis">{r.name}</strong>
-              <Chip tone={r.kind === 'custom' ? 'warn' : 'info'}>{KIND_LABEL[r.kind ?? 'custom'] ?? r.kind}</Chip>
-              <span className="small muted" style={{ flex: 1 }}>
-                {r.kind === 'custom' ? '自由文本规则：不自动执行，需要你手动跟进' : `阈值 ${r.threshold} · ${r.when || ''}`}
-              </span>
-              <Chip>≤{r.limit} 条/天</Chip>
-              <button className="btn btn-sm" onClick={() => void toggle(r.id)} data-testid="rule-toggle">{r.enabled ? '停用' : '启用'}</button>
+          ? <Empty title="还没有规则" desc="规则只会产出通知，不会直接改正文。下面加一条试试。" />
+          : (
+            <div className="stagger">
+              {rules.map((r) => (
+                <div key={r.id} className="rule" data-enabled={r.enabled ? '1' : '0'}>
+                  <span className="rule-dot" aria-hidden="true" />
+                  <span className="rule-name ellipsis">{r.name}</span>
+                  <span className="hit-type">{KIND_LABEL[r.kind ?? 'custom'] ?? r.kind}</span>
+                  <span className="rule-desc ellipsis">
+                    {r.kind === 'custom' ? '自由文本规则：不自动执行，需要你手动跟进' : `阈值 ${r.threshold} · ${r.when || '每 5 分钟'}`}
+                  </span>
+                  <span className="mono muted nowrap">≤{r.limit} 条/天</span>
+                  <button className="btn btn-sm btn-quiet" onClick={() => void toggle(r.id)} data-testid="rule-toggle">
+                    {r.enabled ? '停用' : '启用'}
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-      </Card>
+          )}
+      </section>
 
       {report && (
-        <Card title="上一轮结果" desc={`${report.at.slice(0, 16)} · 评估 ${report.evaluated} 条`} data-testid="rules-report">
+        <section className="section" data-testid="rules-report">
+          <h2 className="rubric">
+            <span className="rubric-no">02</span>
+            上一轮结果
+            <span className="rubric-rule" />
+            <span className="rubric-meta">{report.at.slice(5, 16).replace('T', ' ')} · 评估 {report.evaluated} 条</span>
+          </h2>
           {report.fired.length === 0
-            ? <div className="small muted">没有触发。条件未到，或今天已经提醒过。</div>
+            ? <p className="section-note">没有触发。条件未到，或今天已经提醒过。</p>
             : report.fired.map((f, i) => (
-              <div key={i} className="small">✔ {f.rule}：{f.title}</div>
+              <div key={i} className="part">
+                <span className="chg-check" data-ok="1"><Icon name="check" size={12} /></span>
+                <span className="part-title">{f.rule}</span>
+                <span className="small muted">{f.title}</span>
+              </div>
             ))}
-          {report.skipped.map((k, i) => <div key={`s${i}`} className="small muted">· {k}</div>)}
-        </Card>
+          {report.skipped.map((k, i) => (
+            <div key={`s${i}`} className="part">
+              <span className="chg-check" data-ok="0"><Icon name="close" size={12} /></span>
+              <span className="part-title muted">{k}</span>
+            </div>
+          ))}
+        </section>
       )}
 
-      <Card title="加一条规则">
-        <div className="grid grid-2">
-          <Field label="名字"><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="rule-name" /></Field>
-          <Field label="触发条件" hint="只有这三种会被自动执行">
-            <select className="select" value={form.kind} data-testid="rule-kind" onChange={(e) => setForm({ ...form, kind: e.target.value })}>
-              <option value="inbox-overflow">收件箱积压超过 N 条</option>
-              <option value="overdue-actions">逾期任务达到 N 条</option>
-              <option value="stale-reading">读到一半超过 N 天没动</option>
-              <option value="custom">自定义（只记录，不自动跑）</option>
-            </select>
-          </Field>
-          <Field label="阈值 N"><input className="input" type="number" value={form.threshold} data-testid="rule-threshold" onChange={(e) => setForm({ ...form, threshold: Number(e.target.value) })} /></Field>
-          <Field label="每天最多几条"><input className="input" type="number" value={form.limit} onChange={(e) => setForm({ ...form, limit: Number(e.target.value) })} /></Field>
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">03</span>
+          加一条规则
+          <span className="rubric-rule" />
+        </h2>
+        <div className="panel" style={{ marginTop: 12 }}>
+          <div className="grid grid-2">
+            <Field label="名字"><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="rule-name" /></Field>
+            <Field label="触发条件" hint="只有前三种会被自动执行">
+              <select className="select" value={form.kind} data-testid="rule-kind" onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+                <option value="inbox-overflow">收件箱积压超过 N 条</option>
+                <option value="overdue-actions">逾期任务达到 N 条</option>
+                <option value="stale-reading">读到一半超过 N 天没动</option>
+                <option value="custom">自定义（只记录，不自动跑）</option>
+              </select>
+            </Field>
+            <Field label="阈值 N"><input className="input" type="number" value={form.threshold} data-testid="rule-threshold" onChange={(e) => setForm({ ...form, threshold: Number(e.target.value) })} /></Field>
+            <Field label="每天最多几条"><input className="input" type="number" value={form.limit} onChange={(e) => setForm({ ...form, limit: Number(e.target.value) })} /></Field>
+          </div>
+          <button className="btn btn-primary" onClick={() => void add()} data-testid="rule-add">保存规则</button>
         </div>
-        <button className="btn btn-primary" onClick={() => void add()} data-testid="rule-add">保存规则</button>
-      </Card>
+      </section>
     </div>
   );
 }

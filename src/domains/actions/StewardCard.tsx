@@ -1,6 +1,7 @@
 /* ---------------- 管家：这份数据有没有在腐烂 ---------------- */
 import { useState } from 'react';
 import { Card, Chip } from '../../components/ui.tsx';
+import { Icon } from '../../components/icons.tsx';
 import { endpoints } from '../../services/api.ts';
 import { useUi } from '../../app/ui.ts';
 import { useBrief, useRefresh } from '../../services/use.ts';
@@ -9,6 +10,9 @@ import { useBrief, useRefresh } from '../../services/use.ts';
  * 为什么今天页要放这一块：
  * 「整理」如果只在你想起来的时候做，数据等于没人管。
  * 这里把「积压了多少」摆出来——归档是确定的，一条命令的事，不需要 AI。
+ *
+ * 版式上它是一个「状态仪表」：一个大数字说明有几处要处理，下面是四项明细。
+ * 不是把四个 chip 摊在标题旁边——那样没有主次，读的人不知道先看哪。
  */
 export function StewardCard() {
   const { data, refetch } = useBrief();
@@ -75,71 +79,88 @@ export function StewardCard() {
 
   return (
     <Card
+      className="panel steward"
       title="管家"
-      desc="不需要你做决定的部分，系统自己代谢；需要判断的仍然问你"
       data-testid="steward"
       actions={
-        <>
-          <button className="btn btn-sm" onClick={() => setOpen((v) => !v)} data-testid="steward-toggle">
-            {open ? '收起简报' : '看简报'}
-          </button>
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() => void tidy(true)}
-            disabled={busy !== '' || d.counts.doneOld === 0}
-            data-testid="steward-tidy"
-          >
-            {busy === 'apply' ? '整理中…' : d.counts.doneOld ? `归档 ${d.counts.doneOld} 条已完成` : '没有待归档'}
-          </button>
-        </>
+        <button className="btn btn-sm btn-quiet" onClick={() => setOpen((v) => !v)} data-testid="steward-toggle">
+          {open ? '收起' : '简报'}
+        </button>
       }
     >
-      <div className="row row-wrap small">
-        <Chip tone={d.counts.doneOld ? 'warn' : 'ok'}>{d.counts.doneOld} 条已完成待归档</Chip>
-        <Chip tone={staleInbox ? 'warn' : 'ok'}>收件箱 {d.inbox.length} 条{staleInbox ? `（${staleInbox} 条超 14 天）` : ''}</Chip>
-        <Chip tone={d.reading.length ? 'info' : 'ok'}>{d.reading.length} 章读一半{stuck ? `（${stuck} 章超 14 天没动）` : ''}</Chip>
-        <Chip tone={d.counts.brokenLinks ? 'warn' : 'ok'}>{d.counts.brokenLinks} 条断链</Chip>
-        <span className="spacer" />
-        <span className="muted">
-          {issues === 0 ? '现在没有积压' : `${issues} 处需要处理`} · 数据更新于 {d.at.slice(11, 16)}
+      <div className="steward-head">
+        <b className="steward-num" data-tone={issues ? 'warn' : 'ok'}>{issues}</b>
+        <span className="steward-unit">
+          {issues ? '处需要处理' : '没有积压'}
+          <em>数据更新于 {d.at.slice(11, 16)}</em>
         </span>
       </div>
 
+      <dl className="steward-list">
+        <div>
+          <dt>已完成待归档</dt>
+          <dd data-zero={d.counts.doneOld === 0 ? '1' : '0'}>{d.counts.doneOld}</dd>
+        </div>
+        <div>
+          <dt>收件箱</dt>
+          <dd data-zero={d.inbox.length === 0 ? '1' : '0'}>
+            {d.inbox.length}
+            {staleInbox > 0 && <span className="steward-warn"> · {staleInbox} 条超 14 天</span>}
+          </dd>
+        </div>
+        <div>
+          <dt>读一半</dt>
+          <dd data-zero={d.reading.length === 0 ? '1' : '0'}>
+            {d.reading.length}
+            {stuck > 0 && <span className="steward-warn"> · {stuck} 章停滞</span>}
+          </dd>
+        </div>
+        <div>
+          <dt>断链</dt>
+          <dd data-zero={d.counts.brokenLinks === 0 ? '1' : '0'}>{d.counts.brokenLinks}</dd>
+        </div>
+      </dl>
+
+      {d.counts.doneOld > 0 ? (
+        <button
+          className="btn btn-sm btn-block"
+          onClick={() => void tidy(true)}
+          disabled={busy !== ''}
+          data-testid="steward-tidy"
+        >
+          {busy === 'apply' ? '整理中…' : `归档 ${d.counts.doneOld} 条已完成`}
+        </button>
+      ) : (
+        <p className="steward-idle" data-testid="steward-tidy">没有待归档的条目</p>
+      )}
+
       {d.refresh.length > 0 && (
-        <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }} data-testid="steward-refresh">
-          <div className="small" style={{ marginBottom: 6 }}>
-            冷掉但还没结灰的 {d.refresh.length} 条 —— 不是提醒你重读，是可能已经被新东西推翻
+        <div className="steward-refresh" data-testid="steward-refresh">
+          <div className="steward-refresh-head">
+            <Icon name="clock" size={12} />
+            冷掉但没结灰的 {d.refresh.length} 条
           </div>
-          {d.refresh.slice(0, 3).map((x) => (
-            <div key={x.id} className="row row-wrap" style={{ padding: '4px 0' }}>
-              <span className="small" style={{ flex: 1, minWidth: 0 }}>
-                {x.title} <span className="muted">（{x.idleDays} 天没碰）{x.why}</span>
-              </span>
-              <button className="btn btn-sm" onClick={() => void openRenew(x.id, x.title)} disabled={busy !== ''}>
-                {busy === `renew:${x.id}` ? '载入…' : '看证据'}
-              </button>
-              <button className="btn btn-sm" onClick={() => void stillHolds(x.id)} disabled={busy !== ''}>
-                仍然成立
-              </button>
+          {d.refresh.slice(0, 2).map((x) => (
+            <div key={x.id} className="steward-refresh-item">
+              <div className="small">
+                {x.title}
+                <span className="muted"> · {x.idleDays} 天没碰</span>
+              </div>
+              <div className="row" style={{ gap: 4, marginTop: 4 }}>
+                <button className="btn btn-sm btn-quiet" onClick={() => void openRenew(x.id, x.title)} disabled={busy !== ''}>
+                  {busy === `renew:${x.id}` ? '载入…' : '看证据'}
+                </button>
+                <button className="btn btn-sm btn-quiet" onClick={() => void stillHolds(x.id)} disabled={busy !== ''}>
+                  仍然成立
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
 
       {open && (
-        <pre
-          className="small"
-          style={{
-            marginTop: 10,
-            padding: 12,
-            background: 'var(--surface-2)',
-            borderRadius: 'var(--radius)',
-            whiteSpace: 'pre-wrap',
-            maxHeight: 420,
-            overflow: 'auto',
-          }}
-          data-testid="steward-brief"
-        >
+        <pre className="steward-brief" data-testid="steward-brief">
           {renewText || data?.brief}
         </pre>
       )}

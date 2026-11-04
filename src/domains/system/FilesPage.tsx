@@ -9,7 +9,7 @@
  * 改名也会先告诉你"会断几条链"，让你看见代价。
  */
 import { useState } from 'react';
-import { Card, Chip, Empty, Spinner } from '../../components/ui.tsx';
+import { Card, PageHead, Chip, Empty, Spinner } from '../../components/ui.tsx';
 import { api, endpoints } from '../../services/api.ts';
 import { useUi } from '../../app/ui.ts';
 import { useQuery } from '@tanstack/react-query';
@@ -125,9 +125,10 @@ export function FilesPage() {
 
   return (
     <div className="content-wide">
-      <Card
+      <PageHead
+        eyebrow="系统 · 文件"
         title="文件"
-        desc="这里是你的数据目录。能看、能上传、能改名；删除改成了归档——文件不会消失，只是挪到 archive/fs/"
+        lede="这里是你的数据目录。能看、能上传、能改名；删除改成了归档——文件不会消失，只是挪到 archive/fs/。"
         actions={
           <>
             <label className="btn btn-sm" style={{ cursor: 'pointer' }}>
@@ -153,7 +154,9 @@ export function FilesPage() {
             </button>
           </>
         }
-      >
+      />
+
+      <section className="section" style={{ marginTop: 'var(--sp-5)' }}>
         <div className="row row-wrap small" data-testid="fs-crumbs">
           {data.crumbs.map((c, i) => (
             <span key={c.path} className="row" style={{ gap: 4 }}>
@@ -207,6 +210,7 @@ export function FilesPage() {
           </select>
 
           <span style={{ width: 8 }} />
+          <span className="small muted">排序</span>
           {([['name', '名称'], ['size', '大小'], ['mtime', '时间']] as const).map(([k, label]) => (
             <button
               key={k}
@@ -289,16 +293,16 @@ export function FilesPage() {
             }
           />
         ) : (
-          <div style={{ marginTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div style={{ marginTop: 10, borderTop: '1px solid var(--rule)' }}>
             {visibleDirs.map((d) => (
               <div
                 key={d.path}
                 className="row"
-                style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                style={{ padding: '6px 0', borderBottom: '1px solid var(--rule)', cursor: 'pointer' }}
                 onClick={() => { setPath(d.path); setSelected(''); }}
                 data-testid="fs-dir"
               >
-                <span style={{ width: 18, color: 'var(--muted)' }}>{iconOf('dir')}</span>
+                <span style={{ width: 18, color: 'var(--text-3)' }}>{iconOf('dir')}</span>
                 <span className="ellipsis" style={{ flex: 1 }}>{d.name}</span>
                 <span className="small muted">目录</span>
               </div>
@@ -310,12 +314,12 @@ export function FilesPage() {
                   className="row"
                   style={{
                     padding: '6px 0',
-                    borderBottom: '1px solid var(--border)',
+                    borderBottom: '1px solid var(--rule)',
                     background: selected === f.path ? 'var(--surface-2)' : undefined,
                   }}
                   data-testid="fs-file"
                 >
-                  <span style={{ width: 18, color: 'var(--muted)' }}>{iconOf(f.kind)}</span>
+                  <span style={{ width: 18, color: 'var(--text-3)' }}>{iconOf(f.kind)}</span>
                   {/* 文件名用纯文本：套 .btn 会带边框，看起来像可编辑的输入框 */}
                   {renaming?.path === f.path ? (
                     <input
@@ -350,8 +354,8 @@ export function FilesPage() {
                   )}
                   {!!f.inbound && <Chip tone="ok">{f.inbound} 引用</Chip>}
 
-                  <span className="small muted" style={{ width: 64, textAlign: 'right' }}>{fmtSize(f.bytes)}</span>
-                  <span className="small muted" style={{ width: 96, textAlign: 'right' }}>{f.mtime.slice(5, 16).replace('T', ' ')}</span>
+                  <span className="small muted mono" style={{ width: 64, textAlign: 'right' }}>{fmtSize(f.bytes)}</span>
+                  <span className="small muted mono" style={{ width: 92, textAlign: 'right' }}>{f.mtime.slice(5, 16).replace('T', ' ')}</span>
 
                   <button
                     className="btn btn-sm"
@@ -375,7 +379,7 @@ export function FilesPage() {
                 </div>
 
                 {selected === f.path && preview && (
-                  <div style={{ padding: 10, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }} data-testid="fs-preview">
+                  <div style={{ padding: 10, background: 'var(--surface-2)', borderBottom: '1px solid var(--rule)' }} data-testid="fs-preview">
                     {preview.kind === 'image' ? (
                       <img src={preview.url} alt={f.name} style={{ maxWidth: '100%', maxHeight: 420, borderRadius: 'var(--radius)' }} />
                     ) : preview.text !== undefined ? (
@@ -419,7 +423,7 @@ export function FilesPage() {
             </button>
           </div>
         )}
-      </Card>
+      </section>
     </div>
   );
 }

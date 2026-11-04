@@ -9,6 +9,7 @@ import { useObject, useRefresh } from '../services/use.ts';
 import { endpoints, type ObjectLinkView } from '../services/api.ts';
 import { navigate, openPeek, closePeek, useLocation } from './router.ts';
 import { Spinner, ErrorBox } from '../components/ui.tsx';
+import { Icon } from '../components/icons.tsx';
 
 const KIND_LABEL: Record<string, string> = {
   action: '任务', event: '日程', note: '笔记', part: '章节',
@@ -27,15 +28,6 @@ const ACTOR_LABEL = (a: string) =>
   a === 'human' ? '你' : a.startsWith('agent:') ? a.slice(6) : a === 'system' ? '系统' : '外部';
 
 const today = () => new Date().toISOString().slice(0, 10);
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <>
-      <span className="small muted">{label}</span>
-      <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{children}</span>
-    </>
-  );
-}
 
 export function ObjectPeek() {
   const loc = useLocation();
@@ -119,72 +111,57 @@ export function ObjectPeek() {
       style={{ background: 'rgba(0,0,0,0.18)', zIndex: 300 }}
     >
       <div
-        className="sheet sheet-drawer"
+        className="sheet sheet-drawer peek"
         role="dialog"
         aria-modal="true"
         aria-label={title || '对象详情'}
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 'min(520px, 92vw)' }}
       >
-        <div className="sheet-head">
-          <span
-            className="small"
-            style={{
-              padding: '2px 7px', borderRadius: 4, flex: '0 0 auto',
-              background: 'var(--accent-weak, var(--bg-2))', color: 'var(--accent-strong, var(--text))',
-            }}
-          >
-            {KIND_LABEL[o?.type ?? ''] ?? o?.type ?? ''}
-          </span>
-          <strong style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', fontSize: 'var(--fs-4, 15px)' }}>
-            {title || (isLoading ? '读取中…' : '对象')}
-          </strong>
-          <button className="btn btn-sm btn-ghost" onClick={closePeek} aria-label="关闭" data-testid="peek-close">✕</button>
-        </div>
+        <header className="peek-head">
+          <div className="peek-head-row">
+            <span className="peek-kind">{KIND_LABEL[o?.type ?? ''] ?? o?.type ?? ''}</span>
+            {o?.state && <span className="peek-state" data-state={o.state}>{STATE_LABEL[o.state] ?? o.state}</span>}
+            <span className="spacer" />
+            <button className="btn btn-sm btn-quiet btn-icon" onClick={closePeek} aria-label="关闭" data-testid="peek-close">
+              <Icon name="close" size={15} />
+            </button>
+          </div>
+          <h2 className="peek-title">{title || (isLoading ? '读取中…' : '对象')}</h2>
+          {data?.path && <div className="peek-sub mono" title={data.path}>{data.path}</div>}
+        </header>
 
-        <div className="sheet-body">
+        <div className="peek-body">
           {isLoading && <Spinner />}
           {error && <ErrorBox error={error as Error} />}
 
           {o && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr 64px 1fr', gap: '10px 12px', alignItems: 'baseline' }}>
-                {o.due !== undefined && <Field label="到期">{o.due || '没定'}</Field>}
-                {o.scheduled && <Field label="安排">{o.scheduled[0]}–{o.scheduled[1]}</Field>}
-                {o.start && <Field label="时间">{o.start.slice(11, 16)}–{(o.end ?? o.start).slice(11, 16)}</Field>}
-                {o.state && <Field label="状态">{STATE_LABEL[o.state] ?? o.state}</Field>}
-                {o.flow && <Field label="推进">{FLOW_LABEL[o.flow] ?? o.flow}</Field>}
-                {o.status && <Field label="成熟度">{STATE_LABEL[o.status] ?? o.status}</Field>}
-                {data?.path && (
-                  <Field label="位置">
-                    <span className="mono small">{data.path}</span>
-                  </Field>
-                )}
+              <dl className="peek-meta">
+                {o.due !== undefined && <div><dt>到期</dt><dd className="mono">{o.due || '没定'}</dd></div>}
+                {o.scheduled && <div><dt>安排</dt><dd className="mono">{o.scheduled[0]}–{o.scheduled[1]}</dd></div>}
+                {o.start && <div><dt>时间</dt><dd className="mono">{o.start.slice(11, 16)}–{(o.end ?? o.start).slice(11, 16)}</dd></div>}
+                {o.flow && <div><dt>推进</dt><dd>{FLOW_LABEL[o.flow] ?? o.flow}</dd></div>}
+                {o.status && <div><dt>成熟度</dt><dd>{STATE_LABEL[o.status] ?? o.status}</dd></div>}
                 {o.sourceUrl && (
-                  <Field label="原文">
-                    <a
-                      href={o.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="small"
-                      data-testid="peek-source"
-                    >
-                      打开原始链接 ↗
-                    </a>
-                  </Field>
+                  <div>
+                    <dt>原文</dt>
+                    <dd>
+                      <a href={o.sourceUrl} target="_blank" rel="noreferrer noopener" className="small" data-testid="peek-source">
+                        打开原始链接 ↗
+                      </a>
+                    </dd>
+                  </div>
                 )}
-              </div>
+              </dl>
 
-              {o.summary && (
-                <p className="small" style={{ margin: '14px 0 0', color: 'var(--text-2)' }}>{o.summary}</p>
-              )}
+              {o.summary && <p className="peek-summary">{o.summary}</p>}
 
               {!!data?.links.length && (
-                <div style={{ marginTop: 18 }}>
-                  <div className="small muted" style={{ marginBottom: 4 }}>
+                <section className="peek-sec">
+                  <h3 className="peek-sec-head">
                     资料与关联
-                    <span style={{ marginLeft: 6, opacity: .75 }}>{data.links.length}</span>
-                  </div>
+                    <span className="peek-sec-n">{data.links.length}</span>
+                  </h3>
                   {/*
                     按类分组：24 条资料如果每条都重复一个「资料」标签，等于把列宽喂给了噪音。
                     组头写一次就够了，条目只留标题和类型。
@@ -195,16 +172,12 @@ export function ObjectPeek() {
                     const isMaterial = g.rel === '资料' || g.rel === '项目资料';
                     return (
                       <div key={g.rel}>
-                        <div
-                          className="small muted"
-                          style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '10px 0 2px' }}
-                        >
-                          <span style={{ color: isMaterial ? 'var(--accent-strong, var(--text-2))' : undefined }}>{g.rel}</span>
-                          <span style={{ opacity: .6 }}>{g.items.length}</span>
+                        <div className="peek-rel" data-material={isMaterial ? '1' : '0'}>
+                          <span>{g.rel}</span>
+                          <span className="peek-rel-n">{g.items.length}</span>
                           {g.items.length > 10 && (
                             <button
-                              className="btn btn-sm btn-ghost"
-                              style={{ marginLeft: 'auto', padding: '0 6px', height: 22 }}
+                              className="btn btn-sm btn-quiet"
                               onClick={() => setExpanded((s) => ({ ...s, [g.rel]: !open }))}
                               data-testid="peek-expand"
                             >
@@ -212,59 +185,55 @@ export function ObjectPeek() {
                             </button>
                           )}
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {shown.map((l) => (
-                            <button
-                              key={`${l.rel}-${l.id}`}
-                              className="btn btn-ghost"
-                              style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '5px 8px', height: 'auto' }}
-                              onClick={() => openPeek(l.id)}
-                              title={`${l.rel} · ${l.kind}`}
-                              data-testid="peek-link"
-                              data-rel={l.rel}
-                            >
-                              <span className="ellipsis" style={{ flex: 1 }}>{l.title}</span>
-                              <span className="small muted" style={{ flex: '0 0 auto', opacity: .7 }}>{KIND_LABEL[l.kind] ?? ''}</span>
-                            </button>
-                          ))}
-                        </div>
+                        {shown.map((l) => (
+                          <button
+                            key={`${l.rel}-${l.id}`}
+                            className="peek-link"
+                            onClick={() => openPeek(l.id)}
+                            title={`${l.rel} · ${l.kind}`}
+                            data-testid="peek-link"
+                            data-rel={l.rel}
+                          >
+                            <span className="ellipsis">{l.title}</span>
+                            <span className="peek-link-kind">{KIND_LABEL[l.kind] ?? ''}</span>
+                          </button>
+                        ))}
                       </div>
                     );
                   })}
-                </div>
+                </section>
               )}
 
-              <div style={{ marginTop: 18 }}>
-                <div className="small muted" style={{ marginBottom: 8 }}>
+              <section className="peek-sec">
+                <h3 className="peek-sec-head">
                   {isTask ? '任务池最近变动' : '最近变动'}
-                </div>
+                  <span className="peek-sec-n">{data?.events.length ?? 0}</span>
+                </h3>
                 {isTask && (
-                  <div className="small muted" style={{ marginBottom: 8, opacity: .8 }}>
+                  <p className="section-note" style={{ margin: '0 0 6px' }}>
                     任务都存在同一个文件里，这里显示的是该文件的改动，不一定是这一条。
-                  </div>
+                  </p>
                 )}
                 {data?.events.length ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 176, overflowY: 'auto' }}>
+                  <div className="peek-evs">
                     {data.events.map((e) => (
-                      <div key={e.id} className="small" style={{ color: 'var(--text-2)', display: 'flex', gap: 8 }}>
-                        <span className="mono" style={{ flex: '0 0 auto' }}>{e.at.slice(5, 16).replace('T', ' ')}</span>
-                        <span style={{ flex: '0 0 auto' }}>{ACTOR_LABEL(e.actor)}</span>
+                      <div key={e.id} className="peek-ev">
+                        <span className="mono peek-ev-time">{e.at.slice(5, 16).replace('T', ' ')}</span>
+                        <span className="peek-ev-actor">{ACTOR_LABEL(e.actor)}</span>
                         <span className="ellipsis">{e.summary || e.op}</span>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="small muted">还没有留下变动记录。</div>
+                  <p className="section-note" style={{ margin: 0 }}>还没有留下变动记录。</p>
                 )}
-              </div>
+              </section>
             </>
           )}
         </div>
 
-        <div className="sheet-foot" style={{ justifyContent: 'flex-start', flexWrap: 'wrap' }}>
-          <span className="small muted peek-hint" style={{ marginRight: 4, alignSelf: 'center' }}>
-            J/K 换一条 · Space 收起 · Esc 关闭
-          </span>
+        <footer className="peek-foot">
+          <span className="peek-hint">J/K 换一条 · Space 收起 · Esc 关闭</span>
           {isTask && (
             <>
               <button
@@ -284,7 +253,7 @@ export function ObjectPeek() {
                 改到今天
               </button>
               <button
-                className="btn btn-sm"
+                className="btn btn-sm btn-quiet"
                 disabled={busy || !o?.due}
                 onClick={() => {
                   const d = new Date(o!.due!);
@@ -296,9 +265,9 @@ export function ObjectPeek() {
               </button>
             </>
           )}
-          <span style={{ flex: 1 }} />
+          <span className="spacer" />
           <button
-            className="btn btn-sm"
+            className="btn btn-sm btn-quiet"
             disabled={busy || !o}
             onClick={() => void patch({ archivedAt: new Date().toISOString() }, '归档')}
             title="归档不是删除，文件还在"
@@ -308,9 +277,10 @@ export function ObjectPeek() {
           {o && o.type !== 'action' && (
             <button className="btn btn-sm btn-primary" onClick={openFull}>
               打开全文
+              <Icon name="arrow" size={13} />
             </button>
           )}
-        </div>
+        </footer>
       </div>
     </div>
   );

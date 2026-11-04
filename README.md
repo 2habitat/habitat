@@ -109,6 +109,25 @@ habitat user reset <名字>          # 重置密码，下次登录强制改密
 不配 Agent 的时候系统也能自己转：服务内置代谢（归档已完成、发简报、到点提醒），
 只是不做语义判断——那是留给人和 AI 的。
 
+### 闭环有没有在转，是可以查的
+
+「自动化」最怕的不是没实现，是**停了没人知道**。所以每条闭环都要留回执：
+
+```bash
+habitat loops status               # 19 条闭环：谁 ok、谁迟到、谁从没跑过、积压多少
+habitat loops check                # 自检：静默、没归属、两个执行者撞车
+habitat loops run triage-inbox     # 判断类只出工单；确定性类才真跑
+habitat loops beat triage-inbox --ok --produced note-xxx   # 跑完交账
+habitat loops bind --harness my.yaml --cron                # 外部 harness 能接哪些
+```
+
+规则很简单：**没有回执等于没跑**。平台定时器和外部 cron 谁跑都行，跑完记一笔；
+超过上限没有回执，`status` 里就是 `late/down`，而不是「看起来一切正常」。
+
+- 设计与失配分析：[`docs/automation-loops.md`](docs/automation-loops.md)
+- 19 条闭环的参考手册：[`docs/automation-manual.md`](docs/automation-manual.md)
+- harness 能力声明示例：[`docs/examples/harness.yaml`](docs/examples/harness.yaml)
+
 ## 架构
 
 ```
@@ -123,6 +142,8 @@ src/           React 界面，按域拆（actions / library / changes / system �
 深入看：
 
 - [`docs/architecture.md`](docs/architecture.md) — 数据模型、写入路径、并发与冲突、索引重建
+- [`docs/automation-loops.md`](docs/automation-loops.md) — 自动化与 AI 闭环：失配分析、Loop Contract、落地路线
+- [`docs/automation-manual.md`](docs/automation-manual.md) — 19 条闭环的参考手册（由 `habitat loops manual` 生成）
 - [`docs/auth.md`](docs/auth.md) — 用户名密码 / 令牌两种凭据、会话、强制改密与账号运维
 - [`docs/lifecycle.md`](docs/lifecycle.md) — 生命周期模型、活性与翻新机制
 - [`docs/workflow.md`](docs/workflow.md) — 开发与日常使用怎么分开，升级怎么不出事

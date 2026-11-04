@@ -6,6 +6,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownIt from 'markdown-it';
 import { Card, Chip, Empty, Spinner, ErrorBox, Bar } from '../../components/ui.tsx';
+import { Icon } from '../../components/icons.tsx';
+import { NOTE_STATUS } from '../../app/labels.ts';
 import { useWork, useRep, useAnnotations, useRefresh } from '../../services/use.ts';
 import { endpoints } from '../../services/api.ts';
 import { useUi } from '../../app/ui.ts';
@@ -116,6 +118,9 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
   const fileUrl = currentRep ? `/api/reps/${encodeURIComponent(currentRep)}/file` : '';
   const html = carrier === 'html' ? body : md.render(body);
   const annList = anns?.annotations ?? [];
+  const currentPart = work?.parts.find((p) => p.reps.some((r) => r.id === currentRep));
+  const chapterTitle = currentPart?.part.title ?? '正文';
+  const furthest = Math.round(((repData?.cursor.furthest ?? 0) as number) * 100);
 
   // 把批注的引文在正文里标出来。
   // 注意：这个 useMemo 必须在下面那几个提前 return 之前——hooks 不能放在条件分支后面。
@@ -152,42 +157,75 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
       <nav className="reader-toc" aria-label="章节">
         {work ? (
           <>
-            <div className="row" style={{ marginBottom: 8 }}>
-              <strong className="ellipsis">{work.work.title}</strong>
+            <div className="toc-head">
+              <div className="toc-work ellipsis" title={work.work.title}>{work.work.title}</div>
+              <div className="toc-sub">{work.parts?.length ?? 0} 章 · 读 {Math.round(pct * 100)}%</div>
             </div>
-            {(work.parts ?? [])
-              .slice()
-              .sort((a, b) => a.part.order - b.part.order)
-              .map((p) => {
-                const r = p.reps.find((x) => x.carrier === 'md') ?? p.reps[0];
-                return (
-                  <button
-                    key={p.part.id}
-                    className={`toc-item ${p.part.supplemental ? 'toc-supplemental' : ''}`}
-                    aria-current={r?.id === currentRep}
-                    data-testid="toc-item"
-                    onClick={() => r && setParam('rep', r.id, { work: workId ?? '' })}
-                  >
-                    {p.part.supplemental ? '· ' : ''}{p.part.title}
-                    {p.annotations > 0 && <span className="muted"> ({p.annotations})</span>}
-                  </button>
-                );
-              })}
+            <div className="toc-list">
+              {(work.parts ?? [])
+                .slice()
+                .sort((a, b) => a.part.order - b.part.order)
+                .map((p, i) => {
+                  const r = p.reps.find((x) => x.carrier === 'md') ?? p.reps[0];
+                  return (
+                    <button
+                      key={p.part.id}
+                      className={`toc-item ${p.part.supplemental ? 'toc-supplemental' : ''}`}
+                      aria-current={r?.id === currentRep}
+                      data-testid="toc-item"
+                      onClick={() => r && setParam('rep', r.id, { work: workId ?? '' })}
+                    >
+                      <span className="toc-no">{String(i + 1).padStart(2, '0')}</span>
+                      <span className="toc-label">{p.part.title}</span>
+                      {p.annotations > 0 && <span className="toc-count">{p.annotations}</span>}
+                    </button>
+                  );
+                })}
+            </div>
+            <div className="toc-foot">
+              <span>当前 {Math.round(pct * 100)}%</span>
+              <span className="mono">最远 {furthest}%</span>
+            </div>
           </>
         ) : (
-          <div className="small muted">（从书架进来才能看到章节列表）</div>
+          <div className="small muted" style={{ padding: '8px 4px' }}>从书架进来才能看到章节列表。</div>
         )}
       </nav>
 
       <div className="reader-main" ref={mainRef} data-testid="reader-main">
+        {/* 常驻阅读条：章节、进度、行宽、出口动作都在手边，不用滚到文末再回来 */}
+        <div className="reader-bar">
+          <span className="reader-chapter ellipsis" title={chapterTitle}>{chapterTitle}</span>
+          <span className="reader-pct mono">{Math.round(pct * 100)}%</span>
+          <span className="spacer" />
+          <span className="reading-w" role="group" aria-label="行宽">
+            {([['narrow', '窄'], ['normal', '中'], ['wide', '宽']] as const).map(([w, label]) => (
+              <button
+                key={w}
+                className="btn btn-sm btn-quiet"
+                aria-pressed={readingWidth === w}
+                data-testid={`reading-${w}`}
+                onClick={() => setReadingWidth(w)}
+              >{label}</button>
+            ))}
+          </span>
+          <button className="btn btn-sm btn-quiet" onClick={() => void markReadDone()} data-testid="reader-done">标记读完</button>
+          <button className="btn btn-sm btn-quiet" onClick={() => openSheet('derive', { srcId: currentRep, title: '读后一得' })} data-testid="reader-derive">衍生</button>
+          <button className="btn btn-sm btn-quiet" onClick={() => openAi({ kind: 'rep', id: currentRep, title: chapterTitle })}>
+            <Icon name="assistant" size={13} />
+            问
+          </button>
+          <button className="btn btn-sm" onClick={() => openSheet('annotate', { repId: currentRep })} data-testid="reader-annotate">批注</button>
+          <span className="reader-bar-progress" aria-hidden="true"><i style={{ width: `${Math.round(pct * 100)}%` }} /></span>
+        </div>
+
         {repData.locked && (
-          <div className="card" style={{ marginBottom: 12, borderColor: 'var(--warn)', maxWidth: 'var(--reading-w)' }}>
-            <div className="row">
-              <Chip tone="warn">入库原件 · 只读</Chip>
-              <span className="small muted">可批注、可衍生，不改原文。要改就衍生一篇笔记。</span>
-            </div>
+          <div className="notice" style={{ maxWidth: 'var(--reading-w)' }}>
+            <Chip tone="warn">入库原件 · 只读</Chip>
+            <span>可批注、可衍生，不改原文。要改就衍生一篇笔记。</span>
           </div>
         )}
+
         {carrier === 'pdf' && (
           <div className="pdf-wrap" data-testid="reader-pdf">
             {/* 浏览器内置 PDF 阅读器；用 iframe 而不是 embed，移动端表现更稳 */}
@@ -201,7 +239,7 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
         )}
 
         {carrier === 'epub' && (
-          <div className="card" data-testid="reader-epub" style={{ maxWidth: 'var(--reading-w)' }}>
+          <div className="panel" data-testid="reader-epub" style={{ maxWidth: 'var(--reading-w)' }}>
             <div className="row"><Chip tone="warn">EPUB · 暂不支持页内阅读</Chip></div>
             <p className="small" style={{ marginTop: 8 }}>
               浏览器不能原生渲染 EPUB。现在可以下载原件；要在这里读，先把 EPUB 转成 Markdown 放进 <code>parts/</code>。
@@ -213,45 +251,33 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
         {(carrier === 'md' || carrier === 'html') && (
           <article className="prose" data-testid="reader-body" dangerouslySetInnerHTML={{ __html: marked }} />
         )}
-        <div className="row row-wrap" style={{ maxWidth: 'var(--reading-w)', marginTop: 24 }}>
-          <Chip>读到 {Math.round(pct * 100)}%</Chip>
-          <Chip tone="info">最远 {Math.round((repData.cursor.furthest ?? 0) * 100)}%</Chip>
-          <span className="spacer" />
-          <span className="reading-w" role="group" aria-label="行宽">
-            {([['narrow', '窄'], ['normal', '中'], ['wide', '宽']] as const).map(([w, label]) => (
-              <button
-                key={w}
-                className="btn btn-sm"
-                aria-pressed={readingWidth === w}
-                data-testid={`reading-${w}`}
-                onClick={() => setReadingWidth(w)}
-              >{label}</button>
-            ))}
-          </span>
-          <button className="btn btn-sm" onClick={() => void markReadDone()} data-testid="reader-done">标记读完</button>
-          <button className="btn btn-sm" onClick={() => openSheet('derive', { srcId: currentRep, title: '读后一得' })} data-testid="reader-derive">衍生笔记</button>
-          <button className="btn btn-sm" onClick={() => openAi({ kind: 'rep', id: currentRep, title: '这一章' })}>问助手</button>
+
+        <div className="reader-end">
+          <span className="reader-end-mark">※</span>
+          读到这里。回看不会把最远位置清掉——最远 {furthest}%。
         </div>
       </div>
 
       <aside className="reader-aside">
-        <Card title="批注" desc={`${annList.length} 条`}
-          actions={<button className="btn btn-sm" onClick={() => openSheet('annotate', { repId: currentRep })} data-testid="reader-annotate">加批注</button>}
-        >
+        <Card title="批注" desc={`${annList.length} 条`}>
           {annList.length === 0
-            ? <div className="small muted">选中正文就能划重点、写批注。</div>
+            ? <p className="section-note">选中正文就能划重点、写批注。批注会记在事件流里，可追溯。</p>
             : annList.map((a) => (
-              <div key={a.id} className="card" style={{ marginBottom: 6, padding: 10 }} data-testid="annotation-item">
-                <div className="row">
-                  <Chip tone={a.author.startsWith('agent:') ? 'info' : ''}>{a.author.startsWith('agent:') ? `AI·${a.author.slice(6)}` : '我'}</Chip>
-                  <span className="spacer" />
-                  <span className="small muted">{a.createdAt.slice(0, 10)}</span>
+              <div key={a.id} className="ann" data-testid="annotation-item">
+                <span className="ann-color" data-color={a.color} aria-hidden="true" />
+                <div className="ann-body">
+                  <blockquote className="ann-quote">{a.quote}</blockquote>
+                  {a.note && <p className="ann-note">{a.note}</p>}
+                  <div className="ann-foot">
+                    <span className="mono">{a.author.startsWith('agent:') ? `AI·${a.author.slice(6)}` : '我'} · {a.createdAt.slice(5, 10)}</span>
+                    <button
+                      className="btn btn-sm btn-quiet"
+                      onClick={() => openSheet('derive', { srcId: currentRep, title: '由批注衍生', body: `\n\n> ${a.quote}\n\n${a.note ?? ''}\n` })}
+                    >
+                      由此衍生
+                    </button>
+                  </div>
                 </div>
-                <blockquote className="small" style={{ margin: '6px 0', paddingLeft: 8, borderLeft: '2px solid var(--border-strong)' }}>{a.quote}</blockquote>
-                {a.note && <div className="small">{a.note}</div>}
-                <button className="btn btn-sm btn-ghost" onClick={() => openSheet('derive', { srcId: currentRep, title: '由批注衍生', body: `\n\n> ${a.quote}\n\n${a.note ?? ''}\n` })}>
-                  由此衍生
-                </button>
               </div>
             ))}
         </Card>
@@ -259,22 +285,16 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
         {work && (
           <Card title="血缘" desc="从这里长出去的东西">
             {(work.derived ?? []).length === 0
-              ? <div className="small muted">还没有衍生。</div>
+              ? <p className="section-note">还没有衍生。读到有想法的地方，选中一段就能长出笔记。</p>
               : (work.derived ?? []).map((d) => (
-                <div key={d.id} className="row small" style={{ padding: '3px 0' }}>
-                  <span className="ellipsis" style={{ flex: 1 }}>{d.title}</span>
-                  <Chip>{d.status}</Chip>
-                  <button className="btn btn-sm btn-ghost" onClick={() => navigate('editor', { id: d.id })}>打开</button>
-                </div>
+                <button key={d.id} className="lineage" onClick={() => navigate('editor', { id: d.id })}>
+                  <Icon name="pen" size={13} />
+                  <span className="ellipsis">{d.title}</span>
+                  <span className="mono muted">{NOTE_STATUS[d.status] ?? d.status}</span>
+                </button>
               ))}
           </Card>
         )}
-
-        <Card title="阅读位置">
-          <div className="small muted">当前 {Math.round(pct * 100)}% · 最远 {Math.round((repData.cursor.furthest ?? 0) * 100)}%</div>
-          <div style={{ marginTop: 6 }}><Bar value={Math.max(pct, repData.cursor.furthest ?? 0)} /></div>
-          <div className="small muted" style={{ marginTop: 6 }}>回看不会把最远位置清掉。</div>
-        </Card>
       </aside>
 
       {sel && (

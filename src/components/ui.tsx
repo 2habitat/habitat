@@ -29,6 +29,41 @@ export function Stat({ num, label, hint }: { num: ReactNode; label: string; hint
   );
 }
 
+/** 一组指标横排成账本：数字大、标签小、发丝分隔，比几张等大卡片有主次 */
+export function StatBand({ items }: { items: { num: ReactNode; label: string; hint?: string; tone?: 'danger' | 'accent' }[] }) {
+  return (
+    <div className="ledger">
+      {items.map((it) => (
+        <div key={it.label} className="ledger-cell" data-zero={String(it.num) === '0' ? '1' : '0'} title={it.hint}>
+          <b className="ledger-num" data-tone={it.tone}>{it.num}</b>
+          <span className="ledger-label">{it.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 页头：一个页面只该有一个 h1。
+ * 之前每个页面把标题写在第一张卡片的 header 里，顶栏再重复一次，
+ * 于是「变更」这个词在一次浏览里出现三遍。页头把标题收回来，
+ * 卡片退回它该有的角色——分节。
+ */
+export function PageHead({ eyebrow, title, lede, actions, size = 'md' }: {
+  eyebrow?: ReactNode; title: ReactNode; lede?: ReactNode; actions?: ReactNode; size?: 'md' | 'sm';
+}) {
+  return (
+    <header className="page-head" data-size={size}>
+      {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+      <div className="page-head-row">
+        <h1 className="page-title">{title}</h1>
+        {actions && <div className="page-actions">{actions}</div>}
+      </div>
+      {lede && <p className="lede">{lede}</p>}
+    </header>
+  );
+}
+
 /** data-testid 之类的属性要透传，否则界面上找不到锚点、自动化也点不到 */
 export function Chip({
   children,
@@ -88,6 +123,45 @@ export function Spinner({ label }: { label?: string }) {
   return (
     <div className="row muted" style={{ padding: 16 }}>
       <span className="spin" /> {label ?? '载入中…'}
+    </div>
+  );
+}
+
+/**
+ * 骨架屏：形状照着真实内容长，加载完不会跳一下。
+ * 转圈只说明「在等」，骨架说明「在等什么」——后者让人不焦虑。
+ */
+export function PageSkeleton({ rows = 4, ledger = false, title = true }: { rows?: number; ledger?: boolean; title?: boolean }) {
+  return (
+    <div className="content-wide" aria-busy="true" aria-label="载入中">
+      {title && (
+        <>
+          <span className="sk" style={{ height: 11, width: 96, display: 'block', marginBottom: 14 }} />
+          <span className="sk" style={{ height: 38, width: '42%', display: 'block', marginBottom: 10 }} />
+          <span className="sk" style={{ height: 10, width: '30%', display: 'block' }} />
+        </>
+      )}
+      {ledger && (
+        <div className="ledger">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div className="ledger-cell" key={i}>
+              <span className="sk sk-num" />
+              <span className="sk" style={{ height: 9, width: 40, display: 'block', marginTop: 9 }} />
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ marginTop: ledger ? 0 : 28 }}>
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="task">
+            <span className="sk" style={{ width: 15, height: 15, flex: 'none', marginTop: 2 }} />
+            <div style={{ flex: 1 }}>
+              <span className="sk" style={{ height: 12, width: `${64 - i * 7}%`, display: 'block' }} />
+              <span className="sk" style={{ height: 9, width: 96, display: 'block', marginTop: 8 }} />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

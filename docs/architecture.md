@@ -34,6 +34,7 @@ server/core/          核心，按职责分文件
   renew.ts            翻新：候选召回 + 间隔复习
   usage.ts            使用计数（轻量，不写 journal）
   tidy.ts             管家：代谢 + 每日简报
+  loops.ts            自动化闭环：配置 / 回执 / 健康 / 能力协商 / 执行
   reminders.ts        日程提醒
   mailer.ts           SMTP
   inbox-mail.ts       IMAP 收信 → 收件箱
@@ -44,7 +45,7 @@ server/core/          核心，按职责分文件
 
 server/routes/api.ts  HTTP 接口（按域分段，单文件）
 server/mcp.ts         MCP（stdio JSON-RPC，6 个工具）
-shared/               前后端共用：类型 / frontmatter / 生命周期模型 / 检索取词
+shared/               前后端共用：类型 / frontmatter / 生命周期模型 / 检索取词 / 闭环目录
 src/                  React 界面，按业务域拆
 ```
 
@@ -146,6 +147,27 @@ SQLite 存的是 token 倒排 + 对象快照，**完全由文件派生**：
 - **状态是算出来的**，不是手填标签
 - **活性与成熟度正交**：前者看多久没碰，后者看长成什么样
 - **AI 切入点固定四个**（判断 / 提炼 / 连接 / 质疑），每个都有确定的输入输出
+
+## 自动化闭环
+
+「会自动发生的事」不各自记账，统一走一份目录（`shared/loops.ts`）：
+每条闭环写清触发、入口、步骤、产物、证据、幂等、降级。运行时只有两个文件：
+
+```
+.habitat/state/automation.json   启停 / 归属 / harness 能力声明
+.habitat/state/loop-runs.jsonl   回执：谁在什么时候跑的、结果、产物 id（只追加）
+```
+
+- 健康：`habitat loops status` → `ok / late / down / never / blocked / paused / manual`
+- 自检：`habitat loops check` → 静默、无归属、十分钟内重复执行
+- 对接：`habitat loops bind --harness profile.yaml` → 能接哪些、缺什么、cron 怎么配
+- 手册：`habitat loops manual` 从目录生成，不手写
+
+判断类闭环（`mode=assist`）没有服务端执行器：`loops run` 只出一张工单，
+模型或人做完后用 `loops beat` 交账。这是硬约束——测试会拦「判断类自动 commit」。
+
+设计、失配分析与调研见 [`automation-loops.md`](automation-loops.md)，
+逐条说明见 [`automation-manual.md`](automation-manual.md)。
 
 ## 性能
 

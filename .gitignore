@@ -30,3 +30,7 @@ kb_token*
 # 系统垃圾
 .DS_Store
 Thumbs.db
+
+# 本地截图与工具数据（WorkBuddy 会话产物，不是代码）
+.cache-shot/
+.workbuddy/

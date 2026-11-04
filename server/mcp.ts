@@ -16,6 +16,8 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { Habitat } from './core/space.ts';
 import { touch, flush } from './core/usage.ts';
+import { computeStatuses, runLoop, beat, checkAutomation, agentBrief, renderStatuses } from './core/loops.ts';
+import { LOOPS, loopById } from '../shared/loops.ts';
 
 interface RpcReq {
   jsonrpc: '2.0';
@@ -96,6 +98,52 @@ const TOOLS = [
     description: '对账：比对 sha256 快照，找出没留痕的改动（external_edit）。第一次跑只建基线。',
     inputSchema: { type: 'object', properties: { apply: { type: 'boolean' } }, additionalProperties: false },
   },
+  {
+    name: 'kb_loops',
+    description:
+      '自动化闭环清单与健康：action=list 看有哪些闭环；status 看谁该跑/跑没跑/积压多少；' +
+      'show 看一条的契约；check 自检（静默、无归属、重复执行）；brief 拿一份交接单。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'status', 'show', 'check', 'brief'] },
+        id: { type: 'string', description: 'show 时必填' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'kb_loop_run',
+    description:
+      '执行一条闭环。判断类（triage-inbox / digest-source / connect-notes / challenge-supersede）只返回工单，' +
+      '不会假装完成；确定性闭环会真的跑。dryRun=true 只看不写。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        dryRun: { type: 'boolean' },
+        force: { type: 'boolean', description: '跳过同窗口去重' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'kb_loop_report',
+    description:
+      '给一条闭环记回执：跑完必须调用，否则系统会认为它没跑。produced 写清这次产出的对象/变更集 id。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        ok: { type: 'boolean', description: '默认 true；失败传 false 并写 note' },
+        note: { type: 'string' },
+        produced: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export async function runMcp(root: string, opts: { log?: (s: string) => void } = {}): Promise<void> {
@@ -172,6 +220,41 @@ export async function runMcp(root: string, opts: { log?: (s: string) => void } =
             `署名 ${r.signed.length} 处，未署名 ${r.unsigned.length} 处` +
             (r.unsigned.length ? `\n${r.unsigned.map((u) => `⚠ ${u.path}`).join('\n')}` : ''),
         );
+      }
+      case 'kb_loops': {
+        const action = String(args.action ?? 'status');
+        if (action === 'list') {
+          return text(LOOPS.map((d) => `${d.id}\t${d.name}\t${d.mode}\t${d.entry.cli ?? d.entry.api ?? ''}`).join('\n'));
+        }
+        if (action === 'show') {
+          const d = loopById(String(args.id ?? ''));
+          if (!d) return text(`没有这条闭环：${String(args.id ?? '')}`, true);
+          return text(JSON.stringify(d, null, 2));
+        }
+        if (action === 'check') {
+          const r = await checkAutomation(hab);
+          return text(`${r.passed ? '通过' : '未通过'}\n${JSON.stringify(r, null, 2)}`);
+        }
+        if (action === 'brief') return text(await agentBrief(hab));
+        return text(renderStatuses(await computeStatuses(hab)));
+      }
+      case 'kb_loop_run': {
+        const id = String(args.id ?? '');
+        if (!loopById(id)) return text(`没有这条闭环：${id}`, true);
+        const r = await runLoop(hab, id, { dryRun: args.dryRun === true, force: args.force === true, actor: 'agent:mcp' });
+        const head = r.deduped ? '（去重：窗口内已有回执）' : `${r.result}`;
+        return text(`${head}\n\n${r.output}${r.counts ? `\n\n计数：${JSON.stringify(r.counts)}` : ''}`);
+      }
+      case 'kb_loop_report': {
+        const id = String(args.id ?? '');
+        if (!loopById(id)) return text(`没有这条闭环：${id}`, true);
+        const r = await beat(hab, id, {
+          ok: args.ok !== false,
+          note: args.note ? String(args.note) : undefined,
+          produced: Array.isArray(args.produced) ? args.produced.map(String) : undefined,
+          actor: 'agent:mcp',
+        });
+        return text(`已记回执：${r.loop} ${r.result} ${r.at}`);
       }
       default:
         return text(`没有这个工具：${name}`, true);

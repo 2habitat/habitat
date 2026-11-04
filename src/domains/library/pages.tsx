@@ -1,14 +1,16 @@
 /** 知识域：阅读与编辑是对象模式，不是两个长期目的地 */
 import { useState } from 'react';
-import { Card, Stat, Chip, Empty, Spinner, ErrorBox, Bar, fmtBytes } from '../../components/ui.tsx';
+import { Card, PageHead, Chip, Empty, Spinner, PageSkeleton, ErrorBox, Bar, fmtBytes } from '../../components/ui.tsx';
+import { Icon } from '../../components/icons.tsx';
 import { useQuery } from '@tanstack/react-query';
 import { useWorks, useRefresh } from '../../services/use.ts';
 import { endpoints } from '../../services/api.ts';
 import { useUi } from '../../app/ui.ts';
 import { navigate } from '../../app/router.ts';
+import { WORK_KIND, WORK_STAGE, label } from '../../app/labels.ts';
 import type { WorkView, WorkCandidateView } from '../../services/api.ts';
 
-const STAGE_NAME: Record<string, string> = { capture: '采集', derive: '衍生', digest: '消化', review: '回顾', settle: '沉淀' };
+const STAGE_NAME = WORK_STAGE;
 
 export function ShelfPage() {
   const { data, isLoading, error, refetch } = useWorks();
@@ -22,36 +24,76 @@ export function ShelfPage() {
   const openSheet = useUi((s) => s.openSheet);
   const openAi = useUi((s) => s.openAi);
 
-  if (isLoading) return <Spinner />;
+  if (isLoading) return <PageSkeleton rows={4} ledger />;
   if (error) return <ErrorBox error={error} onRetry={() => void refetch()} />;
   const all = data?.works ?? [];
   const works = q.trim() ? all.filter((w) => (w.work.title + w.work.desc).toLowerCase().includes(q.trim().toLowerCase())) : all;
   const totalParts = all.reduce((a, w) => a + w.parts.length, 0);
+  const totalNotes = all.reduce((a, w) => a + w.annotations, 0);
 
   return (
     <div className="content-wide">
-      <div className="grid grid-4" style={{ marginBottom: 16 }}>
-        <Stat num={all.length} label="作品" hint="界面主口径是作品，不是文件数" />
-        <Stat num={totalParts} label="章节" />
-        <Stat num={all.reduce((a, w) => a + w.annotations, 0)} label="批注" />
-        <Stat num={all.reduce((a, w) => a + w.derived, 0)} label="衍生笔记" />
-      </div>
-
-      <Card
+      <PageHead
+        eyebrow="知识 · 书架"
         title="书架"
-        desc="同一章节的多个载体合成一行"
+        lede="同一章节的多个载体合成一行。读到哪里按章记，回看不会把最远位置清掉。"
         actions={
           <>
-            <input className="input" placeholder="过滤…" style={{ width: 160 }} value={q} onChange={(e) => setQ(e.target.value)} data-testid="shelf-filter" />
-            <button className="btn btn-sm" onClick={() => setShowSup((v) => !v)}>{showSup ? '隐藏' : '显示'}补充材料</button>
-            <button className="btn btn-sm" onClick={() => openSheet('capture', { title: '新作品' })} data-testid="shelf-new">新建</button>
+            <input
+              className="input"
+              placeholder="过滤书名…"
+              style={{ width: 168 }}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              data-testid="shelf-filter"
+              aria-label="过滤书架"
+            />
+            <button className="btn btn-sm" onClick={() => setShowSup((v) => !v)}>
+              {showSup ? '隐藏' : '显示'}补充材料
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={() => openSheet('capture', { title: '新作品' })} data-testid="shelf-new">
+              <Icon name="plus" size={13} />
+              新建
+            </button>
           </>
         }
-      >
-        {works.length === 0
-          ? <Empty title="书架上没有东西" desc="采集一份原文，或者新建一篇笔记" action={<button className="btn" onClick={() => openSheet('capture')}>采集</button>} />
-          : works.map((w) => <WorkCard key={w.work.id} w={w} showSup={showSup} onAi={() => openAi({ kind: 'work', id: w.work.id, title: w.work.title })} />)}
-      </Card>
+      />
+
+      <div className="ledger">
+        <div className="ledger-cell" data-zero={all.length ? '0' : '1'}>
+          <b className="ledger-num">{all.length}</b><span className="ledger-label">作品</span>
+        </div>
+        <div className="ledger-cell" data-zero={totalParts ? '0' : '1'}>
+          <b className="ledger-num">{totalParts}</b><span className="ledger-label">章节</span>
+        </div>
+        <div className="ledger-cell" data-zero={totalNotes ? '0' : '1'}>
+          <b className="ledger-num">{totalNotes}</b><span className="ledger-label">批注</span>
+        </div>
+        <div className="ledger-cell" data-zero={all.reduce((a, w) => a + w.derived, 0) ? '0' : '1'}>
+          <b className="ledger-num">{all.reduce((a, w) => a + w.derived, 0)}</b><span className="ledger-label">衍生笔记</span>
+        </div>
+      </div>
+
+      {cand && cand.candidates.length > 0 && <CandidateCard list={cand.candidates} onDone={() => void refetch()} />}
+
+      {works.length === 0 ? (
+        <Empty
+          title={q ? `没有匹配「${q}」的作品` : '书架上没有东西'}
+          desc={q ? '换个词，或者清掉过滤看全部。' : '采集一份原文，或者新建一篇笔记。目录里已有的 Markdown 也可以直接归组成作品。'}
+          action={<button className="btn" onClick={() => openSheet('capture')}>采集一份</button>}
+        />
+      ) : (
+        <div className="stagger">
+          {works.map((w) => (
+            <WorkEntry
+              key={w.work.id}
+              w={w}
+              showSup={showSup}
+              onAi={() => openAi({ kind: 'work', id: w.work.id, title: w.work.title })}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -84,7 +126,7 @@ function CandidateCard({ list, onDone }: { list: WorkCandidateView[]; onDone: ()
       data-testid="candidates"
     >
       {list.map((c) => (
-        <div key={c.dir} className="row row-wrap" style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+        <div key={c.dir} className="row row-wrap" style={{ padding: '8px 0', borderBottom: '1px solid var(--rule)' }}>
           <input
             className="input"
             style={{ maxWidth: 260 }}
@@ -103,48 +145,74 @@ function CandidateCard({ list, onDone }: { list: WorkCandidateView[]; onDone: ()
   );
 }
 
-function WorkCard({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: () => void }) {
+function WorkEntry({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: () => void }) {
   const [open, setOpen] = useState(false);
   const main = w.parts.filter((p) => !p.supplemental).sort((a, b) => a.order - b.order);
   const sup = w.parts.filter((p) => p.supplemental);
   const done = Math.round(w.readPct * 100);
+  const stage = w.stage ? label(STAGE_NAME, w.stage) : '未开始';
 
   return (
-    <div className="card" style={{ marginBottom: 10 }} data-testid="work-card">
-      <div className="row">
-        <button className="btn btn-ghost btn-sm" onClick={() => setOpen((v) => !v)} aria-expanded={open} data-testid="work-expand">
-          {open ? '▾' : '▸'}
-        </button>
-        <strong className="work-title" style={{ fontSize: 'var(--fs-5)' }}>{w.work.title}</strong>
-        <Chip>{w.work.kind}</Chip>
-        {w.locked && <Chip tone="warn">原件只读</Chip>}
-        <span className="spacer" />
-        <Chip tone={w.stage ? 'accent' : ''}>{STAGE_NAME[w.stage ?? ''] ?? '未开始'}</Chip>
-        <button className="btn btn-sm" onClick={onAi} data-testid="work-ask-ai">问助手</button>
-        <button className="btn btn-sm btn-primary" onClick={() => navigate('reader', { work: w.work.id })} data-testid="work-read">读</button>
+    <article className="entry" data-testid="work-card">
+      <div className="entry-main">
+        <div className="entry-title">
+          <button
+            className="entry-toggle"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-label={open ? '收起章节' : '展开章节'}
+            data-testid="work-expand"
+          >
+            <Icon name="chevron" size={15} className={open ? 'rot-90' : undefined} />
+          </button>
+          <h3>{w.work.title}</h3>
+          <span className="entry-kind">{label(WORK_KIND, w.work.kind)}</span>
+          <span className="entry-stage" data-empty={w.stage ? '0' : '1'}>{stage}</span>
+          {w.locked && <Chip tone="warn">原件只读</Chip>}
+        </div>
+
+        <div className="entry-meta">
+          <span>{main.length} 章</span>
+          <span>批注 {w.annotations}</span>
+          <span>衍生笔记 {w.derived}</span>
+          {w.originals ? <span>原件 {w.originals}</span> : null}
+          {w.work.updatedAt && <span>{w.work.updatedAt.slice(0, 10)}</span>}
+        </div>
+
+        {w.next && <p className="entry-note">卡在「{label(STAGE_NAME, w.next.key)}」：{w.next.text}</p>}
+        {w.work.desc && <p className="entry-desc">{w.work.desc}</p>}
+
+        {done > 0 && (
+          <div className="entry-progress">
+            <Bar value={w.readPct} />
+            <span className="mono">{done}%</span>
+          </div>
+        )}
       </div>
 
-      <div className="row" style={{ marginTop: 8 }}>
-        <div style={{ width: 160 }}><Bar value={w.readPct} /></div>
-        <span className="small mono">{done}%</span>
-        <span className="small muted">{main.length} 章 · 批注 {w.annotations} · 衍生 {w.derived}{w.originals ? ` · 原件 ${w.originals}` : ''}</span>
+      <div className="entry-side">
+        <div className="entry-actions">
+          <button className="btn btn-sm btn-quiet" onClick={onAi} data-testid="work-ask-ai">问助手</button>
+          <button className="btn btn-sm btn-primary" onClick={() => navigate('reader', { work: w.work.id })} data-testid="work-read">
+            {done > 0 ? '继续读' : '开始读'}
+          </button>
+        </div>
       </div>
-
-      {w.next && <div className="small" style={{ marginTop: 6 }}>卡在「{STAGE_NAME[w.next.key]}」：{w.next.text}</div>}
-      {w.work.desc && <div className="small muted" style={{ marginTop: 4 }}>{w.work.desc}</div>}
 
       {open && (
-        <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+        <div className="entry-body">
           {main.map((p) => <PartRow key={p.id} w={w} partId={p.id} title={p.title} />)}
           {sup.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div className="small muted" style={{ marginBottom: 4 }}>补充材料（不进正文顺序）</div>
-              {showSup && sup.map((p) => <PartRow key={p.id} w={w} partId={p.id} title={p.title} />)}
+            <div style={{ marginTop: 10 }}>
+              <div className="group-label">补充材料 · 不进正文顺序</div>
+              {showSup
+                ? sup.map((p) => <PartRow key={p.id} w={w} partId={p.id} title={p.title} />)
+                : <div className="small muted">共 {sup.length} 篇，点上方「显示补充材料」展开。</div>}
             </div>
           )}
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -152,21 +220,29 @@ function PartRow({ w, partId, title }: { w: WorkView; partId: string; title: str
   const reps = w.reps.filter((r) => r.partId === partId);
   const md = reps.find((r) => r.carrier === 'md') ?? reps[0];
   return (
-    <div className="row" style={{ padding: '4px 0' }}>
-      <span className="ellipsis" style={{ flex: 1 }}>{title}</span>
-      {reps.map((r) => (
-        <button
-          key={r.id}
-          className="btn btn-sm"
-          title={`${r.path} · ${fmtBytes(r.bytes)}${r.locked ? ' · 只读' : ''}`}
-          data-testid="part-carrier"
-          // pdf / epub 也进阅读器（阅读器里各自有渲染分支），只有二进制杂项才退回编辑器
-          onClick={() => navigate(['md', 'html', 'pdf', 'epub'].includes(r.carrier) ? 'reader' : 'editor', { rep: r.id })}
-        >
-          {r.carrier}{r.locked ? ' 🔒' : ''}
-        </button>
-      ))}
-      {md && <button className="btn btn-sm btn-ghost" onClick={() => navigate('reader', { rep: md.id })}>打开</button>}
+    <div className="part" data-nav-row={partId}>
+      <button
+        type="button"
+        className="peekable part-title"
+        onClick={() => md && navigate('reader', { rep: md.id })}
+        title={md?.path}
+      >
+        {title}
+      </button>
+      <div className="part-carriers">
+        {reps.map((r) => (
+          <button
+            key={r.id}
+            className="carrier"
+            title={`${r.path} · ${fmtBytes(r.bytes)}${r.locked ? ' · 只读' : ''}`}
+            data-testid="part-carrier"
+            onClick={() => navigate(['md', 'html', 'pdf', 'epub'].includes(r.carrier) ? 'reader' : 'editor', { rep: r.id })}
+          >
+            {r.carrier}
+            {r.locked ? ' · 只读' : ''}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -174,7 +250,7 @@ function PartRow({ w, partId, title }: { w: WorkView; partId: string; title: str
 export function ContinuePage() {
   const { data, isLoading } = useWorks();
   const navigate_ = navigate;
-  if (isLoading) return <Spinner />;
+  if (isLoading) return <PageSkeleton rows={3} />;
   const reading = (data?.works ?? [])
     .filter((w) => w.readPct > 0 && w.readPct < 0.999)
     .sort((a, b) => b.readPct - a.readPct);
@@ -182,14 +258,20 @@ export function ContinuePage() {
 
   return (
     <div className="content-wide">
-      <Card title="继续阅读" desc="按读到哪儿排序">
+      <PageHead
+        eyebrow="知识 · 继续阅读"
+        title="继续阅读"
+        lede="按读到哪儿排序。回看不会把最远位置清掉——位置按章记，不按滚动条记。"
+      />
+
+      <Card title="读到一半" desc={`${reading.length} 篇`}>
         {reading.length === 0
           ? <Empty title="没有读到一半的条目" desc="去书架挑一章开始" action={<button className="btn" onClick={() => navigate('shelf')}>打开书架</button>} />
           : reading.map((w) => (
-            <div key={w.work.id} className="row" style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-              <strong className="ellipsis" style={{ width: 220 }}>{w.work.title}</strong>
-              <div style={{ width: 200 }}><Bar value={w.readPct} /></div>
-              <span className="small mono" style={{ width: 46 }}>{Math.round(w.readPct * 100)}%</span>
+            <div key={w.work.id} className="part" style={{ padding: '10px 0' }}>
+              <span className="part-title ellipsis" style={{ maxWidth: 300 }}>{w.work.title}</span>
+              <span style={{ width: 180 }}><Bar value={w.readPct} /></span>
+              <span className="mono" style={{ width: 42 }}>{Math.round(w.readPct * 100)}%</span>
               <span className="small muted">批注 {w.annotations} · 衍生 {w.derived}</span>
               <span className="spacer" />
               <button className="btn btn-sm btn-primary" onClick={() => navigate_('reader', { work: w.work.id })}>继续</button>
@@ -197,14 +279,14 @@ export function ContinuePage() {
           ))}
       </Card>
 
-      <Card title="还没开始" desc="读了 0% 的">
+      <Card title="还没开始" desc={`${untouched.length} 篇读了 0%`}>
         {untouched.length === 0
-          ? <div className="small muted">都开过头的了。</div>
+          ? <p className="section-note">都开过头的了。</p>
           : untouched.map((w) => (
-            <div key={w.work.id} className="row" style={{ padding: '6px 0' }}>
-              <span className="ellipsis" style={{ flex: 1 }}>{w.work.title}</span>
-              <span className="small muted">{w.parts.length} 章</span>
-              <button className="btn btn-sm" onClick={() => navigate_('reader', { work: w.work.id })}>开始读</button>
+            <div key={w.work.id} className="part">
+              <span className="part-title ellipsis">{w.work.title}</span>
+              <span className="small muted mono">{w.parts.length} 章</span>
+              <button className="btn btn-sm btn-quiet" onClick={() => navigate_('reader', { work: w.work.id })}>开始读</button>
             </div>
           ))}
       </Card>
@@ -217,35 +299,38 @@ export function ComposePage() {
   const { data } = useWorks();
   const refresh = useRefresh();
 
+  const entries = [
+    { id: 'capture', title: '采集一段', desc: '原文先落收件箱，不动脑子。想清楚了再衍生。', icon: 'inbox' as const, run: () => openSheet('capture', { title: '' }) },
+    { id: 'derive', title: '衍生一篇', desc: '基于已有条目写自己的理解，血缘自动连上。', icon: 'pen' as const, run: () => openSheet('derive', { srcId: '' }) },
+    { id: 'editor', title: '直接写笔记', desc: '源码 + 预览 + 元数据表单，适合已经想清楚的。', icon: 'files' as const, run: () => navigate('editor', { id: '' }) },
+    { id: 'refresh', title: '刷新索引', desc: '在编辑器里改了文件、界面上看不到时点一下。', icon: 'review' as const, run: () => refresh() },
+  ];
+
   return (
     <div className="content-wide">
-      <Card title="创作" desc="写东西的入口。写完之后它是笔记，不是草稿堆">
-        <div className="grid grid-2">
-          <button className="btn" style={{ padding: 18, justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start' }} onClick={() => openSheet('capture', { title: '' })} data-testid="compose-capture">
-            <strong>采集一段</strong>
-            <span className="small muted">原文先落收件箱，不动脑子</span>
+      <PageHead
+        eyebrow="知识 · 创作"
+        title="创作"
+        lede="写东西的入口。写完之后它就是笔记，不是草稿堆——只有你知道它还没写完。"
+      />
+
+      <div className="compose-grid">
+        {entries.map((e) => (
+          <button key={e.id} className="compose-card" onClick={e.run} data-testid={`compose-${e.id}`}>
+            <span className="compose-icon"><Icon name={e.icon} size={17} /></span>
+            <strong>{e.title}</strong>
+            <span className="compose-desc">{e.desc}</span>
+            <span className="compose-go"><Icon name="arrow" size={14} /></span>
           </button>
-          <button className="btn" style={{ padding: 18, justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start' }} onClick={() => openSheet('derive', { srcId: '' })} data-testid="compose-derive">
-            <strong>衍生一篇</strong>
-            <span className="small muted">基于已有条目写自己的理解，血缘自动连上</span>
-          </button>
-          <button className="btn" style={{ padding: 18, justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start' }} onClick={() => navigate('editor', { id: '' })} data-testid="compose-editor">
-            <strong>直接写笔记</strong>
-            <span className="small muted">源码 + 预览 + 元数据表单</span>
-          </button>
-          <button className="btn" style={{ padding: 18, justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start' }} onClick={() => refresh()} data-testid="compose-refresh">
-            <strong>刷新索引</strong>
-            <span className="small muted">写完在界面上看不到时点一下</span>
-          </button>
-        </div>
-      </Card>
+        ))}
+      </div>
 
       <Card title="最近动过的作品" desc="从书架过来的">
         {(data?.works ?? []).slice(0, 6).map((w) => (
-          <div key={w.work.id} className="row" style={{ padding: '5px 0' }}>
-            <span className="ellipsis" style={{ flex: 1 }}>{w.work.title}</span>
-            <span className="small muted">{w.work.updatedAt.slice(0, 10)}</span>
-            <button className="btn btn-sm" onClick={() => openSheet('derive', { srcId: w.work.id, title: `${w.work.title} · 读后` })}>衍生</button>
+          <div key={w.work.id} className="part">
+            <span className="part-title ellipsis">{w.work.title}</span>
+            <span className="small muted mono">{w.work.updatedAt.slice(0, 10)}</span>
+            <button className="btn btn-sm btn-quiet" onClick={() => openSheet('derive', { srcId: w.work.id, title: `${w.work.title} · 读后` })}>衍生</button>
           </div>
         ))}
       </Card>

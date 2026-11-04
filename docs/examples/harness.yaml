@@ -1,0 +1,29 @@
+# 外部 harness 的能力声明（示例）
+#
+# 用法：
+#   npx habitat loops bind --harness docs/examples/harness.yaml --cron
+#
+# bind 不会替你装 cron、不会改系统计划任务，只做两件事：
+#   1. 把声明写进 <空间>/.habitat/state/automation.json
+#   2. 算出「哪些闭环你能完整承担 / 只能承担一半 / 根本接不了」
+#
+# 字段说人话：
+#   scheduler: none | cron | interval      你有没有定时能力
+#   alwaysOn:  常驻进程可以不填；cron 型填 false
+#   invoke:    你能怎么调 habitat：cli | http | mcp | fs
+#              （fs 代表你能读写空间文件，导出类闭环需要）
+#   model:     你能做语义判断吗。false 时判断类闭环会停在「备料完成」
+#   humanApproval: 你能等到人点确认吗。false 时 gate 类闭环会卡住
+#   mail:      none | smtp（能发）| imap（能收）| both
+#   shell:     能执行 Shell 吗。发布闭环需要
+#   timezone:  决定 cron 的「每天 08:00」是几点
+
+name: claude-code
+scheduler: cron
+alwaysOn: false
+invoke: [cli, fs]
+model: true
+humanApproval: true
+mail: smtp
+shell: true
+timezone: Asia/Shanghai

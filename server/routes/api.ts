@@ -26,6 +26,11 @@ import { touch, flush } from '../core/usage.ts';
 import { renewPack, renderRenew, markReviewed } from '../core/renew.ts';
 import { listDir, preview, moveFile, makeDir, archiveFiles } from '../core/fs.ts';
 import { loadRules, saveRules, normalizeRule, runRules } from '../core/rules.ts';
+import {
+  computeStatuses, runLoop, beat, loadAutomation, saveAutomation, checkAutomation,
+  conformance, agentBrief, readReceipts, latestByLoop,
+} from '../core/loops.ts';
+import { LOOPS, loopById, renderManual, type HarnessProfile } from '../../shared/loops.ts';
 
 export interface ApiOpts {
   root: string;
@@ -340,11 +345,18 @@ function asBuffer(body: unknown): Buffer | null {
     const { id } = req.params as { id: string };
     const rep = hab.store.get(id);
     if (!rep) return reply.code(404).send({ error: `载体不存在：${id}` });
-    const content = await hab.store.body(id);
+    // 有文件就读文件：编辑器要看到的是「这一份 Markdown」，含 frontmatter。
+    // 只回正文会让元数据表单对着空对象编辑——改了保存不上，等于在骗人。
+    const rel = hab.store.file(id);
+    let content: string;
+    try {
+      content = rel ? await hab.store.adapter.read(rel) : await hab.store.body(id);
+    } catch {
+      content = await hab.store.body(id);
+    }
     touch(hab.store, id, 'open');
     const cursor = hab.store.cursors.get(id);
     // hash + rev 一起回给客户端：它保存时要拿这个当基准，服务端才知道有没有人抢先改过
-    const rel = hab.store.file(id);
     const st = rel ? await hab.store.adapter.stat(rel) : undefined;
     return {
       rep,
@@ -1194,6 +1206,70 @@ function asBuffer(body: unknown): Buffer | null {
     return { ok: true, stats: hab.stats() };
   });
 
+  /* ---------------- 自动化闭环 ---------------- */
+
+  app.get('/api/loops', async () => computeStatuses(hab));
+
+  app.get('/api/loops/check', async () => checkAutomation(hab));
+
+  app.get('/api/loops/brief', async () => ({ brief: await agentBrief(hab) }));
+
+  app.get('/api/loops/receipts', async (req) => {
+    const q = (req.query ?? {}) as { loop?: string; limit?: string };
+    const all = await readReceipts(hab);
+    const filtered = q.loop ? all.filter((r) => r.loop === q.loop) : all;
+    return { receipts: filtered.slice(-Number(q.limit ?? 100)) };
+  });
+
+  app.get('/api/loops/manual', async (_req, reply) =>
+    reply.type('text/markdown; charset=utf-8').send(renderManual({ generatedAt: nowISO() })),
+  );
+
+  app.post('/api/loops/conformance', async (req) => {
+    const b = (req.body ?? {}) as { harness?: HarnessProfile };
+    return conformance(hab, b.harness);
+  });
+
+  app.get('/api/loops/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const def = loopById(id);
+    if (!def) return reply.code(404).send({ error: `没有这条闭环：${id}` });
+    const status = await computeStatuses(hab);
+    const receipts = await readReceipts(hab);
+    return {
+      loop: def,
+      status: status.states.find((s) => s.id === id),
+      recent: receipts.filter((r) => r.loop === id).slice(-10).reverse(),
+    };
+  });
+
+  app.post('/api/loops/:id/config', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!loopById(id)) return reply.code(404).send({ error: `没有这条闭环：${id}` });
+    const b = (req.body ?? {}) as { enabled?: boolean; owner?: string; note?: string };
+    const cfg = await loadAutomation(hab);
+    cfg.loops[id] = { ...(cfg.loops[id] ?? {}), ...b };
+    await saveAutomation(hab, cfg);
+    return { ok: true, config: cfg.loops[id] };
+  });
+
+  app.post('/api/loops/:id/run', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!loopById(id)) return reply.code(404).send({ error: `没有这条闭环：${id}` });
+    const b = (req.body ?? {}) as { dryRun?: boolean; force?: boolean; out?: string; fetch?: boolean; mail?: boolean };
+    const actor = actorOf(b, req.headers);
+    const r = await runLoop(hab, id, { ...b, actor });
+    return reply.code(r.result === 'fail' ? 500 : 200).send({ ok: r.result !== 'fail', ...r });
+  });
+
+  app.post('/api/loops/:id/beat', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!loopById(id)) return reply.code(404).send({ error: `没有这条闭环：${id}` });
+    const b = (req.body ?? {}) as { ok?: boolean; note?: string; produced?: string[]; counts?: Record<string, number> };
+    const r = await beat(hab, id, { ...b, actor: actorOf(b, req.headers) });
+    return reply.code(201).send({ ok: true, receipt: r });
+  });
+
   app.get('/api/agent/manifest', async () => ({
     manifest: buildManifest(hab),
   }));
@@ -1216,11 +1292,40 @@ export interface Capability {
   mutating: boolean;
 }
 
-export function buildManifest(hab: Habitat): { space: string; generatedAt: string; capabilities: Capability[] } {
+export function buildManifest(hab: Habitat): {
+  space: string;
+  generatedAt: string;
+  capabilities: Capability[];
+  automation: { list: string; check: string; manual: string; run: string; beat: string };
+  loops: { id: string; name: string; mode: string; autonomy: string; trigger: string; requires: string[]; entry: { cli?: string; api?: string; mcp?: string; ui?: string; command?: string }; backlog?: string }[];
+} {
   const root = hab.store.root;
   return {
     space: root,
     generatedAt: nowISO(),
+    automation: {
+      list: 'GET /api/loops',
+      check: 'GET /api/loops/check',
+      manual: 'GET /api/loops/manual',
+      run: 'POST /api/loops/:id/run {dryRun, force}',
+      beat: 'POST /api/loops/:id/beat {ok, note, produced[]}',
+    },
+    loops: LOOPS.map((d) => ({
+      id: d.id,
+      name: d.name,
+      mode: d.mode,
+      autonomy: d.autonomy,
+      trigger: d.trigger.kind === 'interval'
+        ? `every ${d.trigger.minutes}m`
+        : d.trigger.kind === 'daily'
+          ? `daily ${d.trigger.at}`
+          : d.trigger.kind === 'event'
+            ? `event: ${d.trigger.on}`
+            : `manual: ${d.trigger.note ?? ''}`,
+      requires: d.requires,
+      entry: d.entry,
+      backlog: d.backlog,
+    })),
     capabilities: [
       {
         id: 'search',

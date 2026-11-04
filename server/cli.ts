@@ -21,6 +21,16 @@ import { renewPack, renderRenew, markReviewed, reviewOf } from './core/renew.ts'
 import { touch, flush } from './core/usage.ts';
 import { parseScheduled } from './core/inline.ts';
 import { AuthService, defaultAuthFile, defaultPasswordDays, type Role } from './core/auth.ts';
+import {
+  computeStatuses, renderStatuses, runLoop, beat, loadAutomation, saveAutomation,
+  checkAutomation, renderCheck, agentBrief,
+} from './core/loops.ts';
+import {
+  LOOPS, loopById, renderManual, triggerLabel, cronOf, MODE_LABEL, AUTONOMY_LABEL,
+  EXECUTOR_LABEL, CAP_LABEL, fitAll, humanMinutes, type HarnessProfile,
+} from '../shared/loops.ts';
+import { runRules } from './core/rules.ts';
+import { parse as yamlParse } from 'yaml';
 import type { JournalOp } from '../shared/types.ts';
 import { nowISO } from '../shared/id.ts';
 
@@ -88,6 +98,18 @@ function usage(): string {
   habitat brief                            今日简报：今天/逾期/7 天内/读一半/收件箱/库状态
   habitat tidy [--apply]                   代谢：列出（或执行）可归档的已完成任务
   habitat notify [--test|--send]           邮件提醒：看配置 / 发测试信 / 真发一轮
+  habitat rules run [--dry-run]            跑一轮结构化规则（只产出通知）
+
+  habitat loops list|status|check [--json] 自动化闭环：清单 / 健康 / 自检
+  habitat loops show <id>                  一条闭环的契约（入口/步骤/证据/降级）
+  habitat loops run <id> [--dry-run] [--force] [--actor agent:xxx]
+                                           执行（或出一张工单）；判断类只备料不落盘
+  habitat loops beat <id> [--fail] [--produced a,b] [--note "…"] [--actor agent:xxx]
+                                           记一次回执：证明这次真的跑过、跑出了什么
+  habitat loops bind --harness <profile.yaml> [--assign] [--cron]
+                                           声明 harness 能力，算它能接哪些闭环
+  habitat loops brief                      给外部 harness 的交接单（该做什么、别做什么）
+  habitat loops manual [--out docs/…md]    从目录生成参考手册（不要手改手册）
   habitat attach <文件> [--as 名字] [--dir originals] [--markdown]   上传附件，给出可插入的 markdown
   habitat project "标题" [--goal "…"]      新建项目
   habitat done <id...>                    完成任务
@@ -95,6 +117,7 @@ function usage(): string {
   habitat archive <id...>                 归档（不是删除）
   habitat write <id> --body "…" | --file x.md   改正文/改那一行
   habitat list --what tasks|events|inbox|works  列清单
+  habitat links                            断链清单：哪些 [[目标]] 解析不到、谁在引用
 
   habitat user list [--json]                    账号列表
   habitat user add <用户名> [--name 显示名] [--role owner|member] [--password …] [--no-force]
@@ -229,6 +252,189 @@ async function userCommand(sub: string | undefined): Promise<number> {
   }
 
   console.log(usage());
+  return 1;
+}
+
+async function loopsCommand(hab: Habitat, sub?: string): Promise<number> {
+  const json = flag('json');
+
+  if (!sub || sub === 'list') {
+    if (json) {
+      console.log(JSON.stringify({ loops: LOOPS }, null, 2));
+      return 0;
+    }
+    console.log('闭环目录（定义随代码走；启停与归属在 .habitat/state/automation.json）\n');
+    console.log('ID                     模式        触发                执行者');
+    console.log('─────────────────────  ──────────  ──────────────────  ──────────────────');
+    for (const d of LOOPS) {
+      console.log(
+        `${d.id.padEnd(21)}  ${MODE_LABEL[d.mode].padEnd(8)}  ${triggerLabel(d.trigger).padEnd(18)}  ${d.executors.map((e) => EXECUTOR_LABEL[e]).join('/')}`,
+      );
+    }
+    console.log('\n看状态：habitat loops status ｜ 看一条：habitat loops show <id> ｜ 自检：habitat loops check');
+    return 0;
+  }
+
+  if (sub === 'status') {
+    const r = await computeStatuses(hab);
+    if (json) {
+      console.log(JSON.stringify(r, null, 2));
+      return 0;
+    }
+    console.log(renderStatuses(r));
+    return 0;
+  }
+
+  if (sub === 'show') {
+    const id = positional()[1];
+    const d = id ? loopById(id) : undefined;
+    if (!d) return console.log(`用法：habitat loops show <id>\n可用：${LOOPS.map((x) => x.id).join(' / ')}`), 1;
+    if (json) {
+      console.log(JSON.stringify(d, null, 2));
+      return 0;
+    }
+    console.log(`■ ${d.name}（${d.id}）`);
+    console.log(`  目标：${d.intent}`);
+    console.log(`  触发：${triggerLabel(d.trigger)}  存活上限：${humanMinutes(d.maxSilenceMinutes)}`);
+    console.log(`  模式：${MODE_LABEL[d.mode]} · 自主度 ${AUTONOMY_LABEL[d.autonomy]} · 执行者 ${d.executors.map((e) => EXECUTOR_LABEL[e]).join('/')}`);
+    const entry = [d.entry.cli, d.entry.api, d.entry.mcp ? `MCP ${d.entry.mcp}` : '', d.entry.command, d.entry.ui ? `UI ${d.entry.ui}` : ''].filter(Boolean);
+    console.log(`  入口：${entry.join(' ｜ ')}`);
+    console.log('  步骤：');
+    d.steps.forEach((s, i) => console.log(`    ${i + 1}. ${s}`));
+    console.log(`  产物：${d.outputs.join('；')}`);
+    console.log(`  证据：${d.evidence.join('；')}`);
+    console.log(`  幂等：${d.idempotency}`);
+    for (const [k, v] of Object.entries(d.degrade)) console.log(`  降级·${k}：${v}`);
+    if (d.backlog) console.log(`  积压指标：${d.backlog}`);
+    console.log(`  默认归属：${d.ownerHint}`);
+    if (d.note) console.log(`  备注：${d.note}`);
+    return 0;
+  }
+
+  if (sub === 'run') {
+    const id = positional()[1];
+    if (!id) return console.log('用法：habitat loops run <id> [--dry-run] [--force] [--actor agent:xxx]'), 1;
+    const r = await runLoop(hab, id, {
+      dryRun: flag('dry-run'),
+      force: flag('force'),
+      actor: arg('actor') ?? 'human',
+      mail: flag('mail'),
+      fetch: flag('fetch'),
+      out: arg('out'),
+    });
+    console.log(r.output);
+    if (r.deduped) console.log('\n（去重：同一窗口内已有回执。要强制重跑加 --force）');
+    return r.result === 'fail' ? 1 : 0;
+  }
+
+  if (sub === 'beat') {
+    const id = positional()[1];
+    if (!id) return console.log('用法：habitat loops beat <id> [--fail] [--produced a,b] [--note "…"]'), 1;
+    if (!loopById(id)) return console.log(`没有这条闭环：${id}`), 1;
+    const produced = (arg('produced') ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+    const r = await beat(hab, id, {
+      ok: !flag('fail'),
+      note: arg('note'),
+      produced,
+      actor: arg('actor') ?? 'agent:external',
+    });
+    console.log(`已记回执：${r.loop} · ${r.result} · ${r.by} · ${r.at}`);
+    if (produced.length) console.log(`  产物 ${produced.length} 个：${produced.slice(0, 5).join('、')}${produced.length > 5 ? '…' : ''}`);
+    return 0;
+  }
+
+  if (sub === 'bind') {
+    const file = arg('harness');
+    if (!file) return console.log('用法：habitat loops bind --harness profile.yaml [--assign] [--cron]'), 1;
+    let profile: HarnessProfile;
+    try {
+      const raw = await readFile(path.resolve(file), 'utf8');
+      profile = (file.endsWith('.json') ? JSON.parse(raw) : yamlParse(raw)) as HarnessProfile;
+    } catch (e) {
+      return console.log(`读不了 harness 声明：${(e as Error).message}`), 1;
+    }
+    if (!profile?.name || !Array.isArray(profile.invoke) || !profile.scheduler) {
+      return console.log('声明至少要写 name / scheduler / invoke 三个字段，见 docs/automation-manual.md'), 1;
+    }
+    const cfg = await loadAutomation(hab);
+    cfg.harness = profile;
+    if (flag('assign')) {
+      for (const f of fitAll(profile)) {
+        if (f.level !== 'full') continue;
+        cfg.loops[f.loop] = { ...(cfg.loops[f.loop] ?? {}), owner: profile.name };
+      }
+    }
+    await saveAutomation(hab, cfg);
+
+    const fits = fitAll(profile);
+    const full = fits.filter((f) => f.level === 'full');
+    const partial = fits.filter((f) => f.level === 'partial');
+    const none = fits.filter((f) => f.level === 'none');
+
+    if (json) {
+      console.log(JSON.stringify({ harness: profile, summary: { full: full.length, partial: partial.length, none: none.length }, fits }, null, 2));
+      return 0;
+    }
+
+    console.log(`harness：${profile.name} · 调度 ${profile.scheduler}${profile.timezone ? ` · ${profile.timezone}` : ''}`);
+    console.log(`完整 ${full.length} · 部分 ${partial.length} · 接不了 ${none.length}\n`);
+    for (const f of full) {
+      const d = loopById(f.loop)!;
+      console.log(`  ✓ ${d.id.padEnd(21)} ${f.cron ?? '按需'}  ${f.command ?? d.entry.api ?? ''}`);
+    }
+    for (const f of partial) {
+      const d = loopById(f.loop)!;
+      console.log(`  ~ ${d.id.padEnd(21)} ${f.why}`);
+    }
+    for (const f of none) {
+      const d = loopById(f.loop)!;
+      console.log(`  ✗ ${d.id.padEnd(21)} ${f.why}`);
+    }
+    console.log(`\n已写入 ${'.habitat/state/automation.json'}${flag('assign') ? '（完整可承担的已声明归属）' : '（只记能力，未改归属；要自动归属加 --assign）'}`);
+
+    if (flag('cron')) {
+      console.log('\n# crontab（按声明能力生成）');
+      console.log('# 统一走 loops run：它会去重、写回执；判断类会出工单而不是假装完成。');
+      for (const f of full) {
+        if (!f.cron) continue;
+        const d = loopById(f.loop)!;
+        const cmd = `npx habitat loops run ${f.loop}${d.harnessArgs ? ` ${d.harnessArgs}` : ''} --actor agent:${profile.name}`;
+        console.log(`${f.cron}  cd /path/to/habitat && ${cmd}`);
+      }
+    }
+    return 0;
+  }
+
+  if (sub === 'check') {
+    const r = await checkAutomation(hab);
+    if (json) {
+      console.log(JSON.stringify(r, null, 2));
+      return r.passed ? 0 : 1;
+    }
+    console.log(renderCheck(r));
+    return r.passed ? 0 : 1;
+  }
+
+  if (sub === 'brief') {
+    console.log(await agentBrief(hab));
+    return 0;
+  }
+
+  if (sub === 'manual') {
+    const md = renderManual({ generatedAt: nowISO() });
+    const out = arg('out');
+    if (out) {
+      const abs = path.resolve(out);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, md, 'utf8');
+      console.log(`已生成 ${abs}（${LOOPS.length} 条闭环）`);
+    } else {
+      console.log(md);
+    }
+    return 0;
+  }
+
+  console.log(`未知子命令：${sub}\n可用：list / status / show / run / beat / bind / check / brief / manual`);
   return 1;
 }
 
@@ -550,6 +756,35 @@ async function main(): Promise<number> {
       }
       return r.error ? 1 : 0;
     }
+    case 'links': {
+      const targets = hab.store.unresolvedTargets();
+      const total = targets.reduce((a, x) => a + x.refs.length, 0);
+      console.log(`未解析目标 ${targets.length} 个，共 ${total} 处引用。`);
+      for (const t of targets.slice(0, 30)) {
+        console.log(`  [[${t.target}]]  ${t.refs.length} 处`);
+        for (const r of t.refs.slice(0, 3)) console.log(`    ← ${r.path || r.id}`);
+      }
+      if (targets.length > 30) console.log(`  …还有 ${targets.length - 30} 个，看 /api/links/unresolved`);
+      console.log('');
+      console.log('每个目标：补一篇、改指向、或明确删链接；走 propose，不要直接改文件。');
+      return 0;
+    }
+    case 'rules': {      if (sub !== 'run') {
+        const r = await runRules(hab, { dryRun: true });
+        console.log(`规则 ${r.rules} 条，可求值 ${r.evaluated} 条。`);
+        for (const s of r.skipped) console.log(`  · ${s}`);
+        console.log('跑一轮：habitat rules run [--dry-run]');
+        return 0;
+      }
+      const r = await runRules(hab, { dryRun: flag('dry-run') });
+      console.log(`规则 ${r.rules} 条，求值 ${r.evaluated} 条，触发 ${r.fired.length} 条${flag('dry-run') ? '（dry-run）' : ''}`);
+      for (const f of r.fired) console.log(`  ✓ ${f.rule}：${f.title}`);
+      for (const s of r.skipped) console.log(`  · ${s}`);
+      return 0;
+    }
+    case 'loops': {
+      return loopsCommand(hab, sub);
+    }
     case 'notify': {
       const st = notifyStatus();
       if (flag('test')) {
@@ -583,8 +818,7 @@ async function main(): Promise<number> {
     case 'attach': {
       const file = positional()[0];
       if (!file) return console.log('用法：habitat attach <文件路径> [--as 名字] [--dir attachments|originals] [--markdown]'), 1;
-      const abs = path.resolve(file);
-      const buf = await readFile(abs).catch(() => null);
+      const abs = path.resolve(file);      const buf = await readFile(abs).catch(() => null);
       if (!buf) return console.log(`读不到文件：${abs}`), 1;
       const r = await saveAsset(hab.store, buf, {
         name: arg('as') ?? path.basename(abs),

@@ -27,7 +27,9 @@ import {
 } from './core/auth.ts';
 import { runRules } from './core/rules.ts';
 import { runReminders } from './core/reminders.ts';
-import { sendDailyBrief } from './core/tidy.ts';
+import { sendDailyBrief, runTidy } from './core/tidy.ts';
+import { appendReceipt } from './core/loops.ts';
+import { nowISO } from '../shared/id.ts';
 
 export const DEFAULT_ROOT = process.env.HABITAT_SPACE ?? path.resolve('space');
 
@@ -182,15 +184,42 @@ export async function start(rootArg?: string) {
   }
 
   // 规则调度：让「自动化」真的会自己跑。只产出通知，不碰正文。
+  //
+  // 每一条定时器都必须留回执：没有回执，「跑没跑」就只能靠猜，
+  // 而猜不出来的闭环最后都会变成文档里的空壳（见 docs/automation-loops.md）。
+  const beatAt = new Map<string, number>();
+  const shouldBeat = (id: string, hot: boolean, gapMin = 30) => {
+    const last = beatAt.get(id) ?? 0;
+    if (!hot && Date.now() - last < gapMin * 60_000) return false;
+    beatAt.set(id, Date.now());
+    return true;
+  };
+  const record = async (
+    loop: string,
+    result: 'ok' | 'fail' | 'skipped',
+    counts?: Record<string, number>,
+    note?: string,
+  ) => {
+    try {
+      await appendReceipt(app.habitat, { loop, at: nowISO(), by: 'system', trigger: 'timer', result, counts, note });
+    } catch (e) {
+      console.warn(`[habitat] 回执写入失败（${loop}）：${(e as Error).message}`);
+    }
+  };
+
   const rulesMs = Number(process.env.HABITAT_RULES_MS ?? 300000);
   const ruleTimer = rulesMs > 0
     ? setInterval(() => {
         if (writes > 0) return; // 有人在写就先不插一脚
         void runRules(app.habitat)
-          .then((r) => {
+          .then(async (r) => {
             if (r.fired.length) console.log(`[habitat] 规则触发 ${r.fired.length} 条：${r.fired.map((f) => f.rule).join('、')}`);
+            if (shouldBeat('rules', r.fired.length > 0)) await record('rules', 'ok', { rules: r.rules, evaluated: r.evaluated, fired: r.fired.length });
           })
-          .catch((e) => console.warn(`[habitat] 规则执行出错：${(e as Error).message}`));
+          .catch(async (e) => {
+            console.warn(`[habitat] 规则执行出错：${(e as Error).message}`);
+            await record('rules', 'fail', undefined, (e as Error).message);
+          });
       }, rulesMs)
     : undefined;
   ruleTimer?.unref?.();
@@ -201,14 +230,43 @@ export async function start(rootArg?: string) {
     ? setInterval(() => {
         if (writes > 0) return;
         void runReminders(app.habitat)
-          .then((r) => {
+          .then(async (r) => {
             if (r.sent.length) console.log(`[habitat] 已发提醒 ${r.sent.length} 条：${r.sent.map((x) => x.kind).join('、')}`);
             if (r.error) console.warn(`[habitat] 提醒发送失败：${r.error}`);
+            if (!r.enabled) {
+              if (shouldBeat('reminders', false, 120)) await record('reminders', 'skipped', { sent: 0 }, '没有配置邮件通道');
+            } else if (shouldBeat('reminders', r.sent.length > 0)) {
+              await record('reminders', r.error ? 'fail' : 'ok', { sent: r.sent.length, skipped: r.skipped.length }, r.error);
+            }
           })
-          .catch((e) => console.warn(`[habitat] 提醒出错：${(e as Error).message}`));
+          .catch(async (e) => {
+            console.warn(`[habitat] 提醒出错：${(e as Error).message}`);
+            await record('reminders', 'fail', undefined, (e as Error).message);
+          });
       }, remindMs)
     : undefined;
   remindTimer?.unref?.();
+
+  // 代谢：归档已完成超 30 天的任务。默认落盘（走变更集，可整批撤销）；
+  // HABITAT_TIDY_APPLY=0 退回「只出报告」，HABITAT_TIDY_MS=0 完全关掉。
+  const tidyMs = Number(process.env.HABITAT_TIDY_MS ?? 6 * 3600_000);
+  const tidyTimer = tidyMs > 0
+    ? setInterval(() => {
+        if (writes > 0) return;
+        void runTidy(app.habitat, { dryRun: process.env.HABITAT_TIDY_APPLY === '0' })
+          .then(async (r) => {
+            if (r.archived) console.log(`[habitat] 代谢归档 ${r.archived} 条已完成任务`);
+            if (shouldBeat('metabolism', r.archived > 0, 240)) {
+              await record('metabolism', r.error ? 'fail' : 'ok', { archived: r.archived, candidates: r.candidates }, r.error);
+            }
+          })
+          .catch(async (e) => {
+            console.warn(`[habitat] 代谢出错：${(e as Error).message}`);
+            await record('metabolism', 'fail', undefined, (e as Error).message);
+          });
+      }, tidyMs)
+    : undefined;
+  tidyTimer?.unref?.();
 
   // 每天一封简报：默认 08:00 之后第一次检查时发。没配邮件通道就什么都不做。
   const briefHour = Number(process.env.HABITAT_BRIEF_HOUR ?? 8);
@@ -217,19 +275,30 @@ export async function start(rootArg?: string) {
     if (now.getHours() < briefHour) return;
     if (writes > 0) return;
     void sendDailyBrief(app.habitat)
-      .then((r) => {
-        if (r.sent) console.log('[habitat] 今日简报已发送');
-        else if (r.reason && r.reason !== '今天已经发过') console.warn(`[habitat] 简报未发送：${r.reason}`);
+      .then(async (r) => {
+        if (r.sent) {
+          console.log('[habitat] 今日简报已发送');
+          await record('daily-brief', 'ok', undefined, '已发邮件');
+        } else if (r.reason && r.reason !== '今天已经发过') {
+          console.warn(`[habitat] 简报未发送：${r.reason}`);
+          if (shouldBeat('daily-brief', false, 120)) await record('daily-brief', 'skipped', undefined, r.reason);
+        } else if (shouldBeat('daily-brief', false, 120)) {
+          await record('daily-brief', 'ok', undefined, '今天已经发过');
+        }
       })
-      .catch((e) => console.warn(`[habitat] 简报出错：${(e as Error).message}`));
+      .catch(async (e) => {
+        console.warn(`[habitat] 简报出错：${(e as Error).message}`);
+        await record('daily-brief', 'fail', undefined, (e as Error).message);
+      });
   }, 600_000);
   briefTimer.unref?.();
 
   const watchMs = Number(process.env.HABITAT_WATCH_MS ?? 15000);
   const watcher = watchMs > 0
     ? setInterval(() => {
-        void app.habitat.pollExternal(() => writes).then((changed) => {
+        void app.habitat.pollExternal(() => writes).then(async (changed) => {
           if (changed) console.log('[habitat] 检测到外部改动，已重扫');
+          if (shouldBeat('watch-external', changed)) await record('watch-external', 'ok', undefined, changed ? '检测到外部改动' : '无改动');
         });
       }, watchMs)
     : undefined;
@@ -247,6 +316,7 @@ export async function start(rootArg?: string) {
       if (ruleTimer) clearInterval(ruleTimer);
       if (remindTimer) clearInterval(remindTimer);
       if (briefTimer) clearInterval(briefTimer);
+      if (tidyTimer) clearInterval(tidyTimer);
       app.habitat.close();
       console.log(`[habitat] 已收到 ${sig}，连接已关闭`);
     } catch (e) {

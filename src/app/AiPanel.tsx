@@ -13,6 +13,7 @@ import { endpoints, type SearchView, type TodayView, type FlowView } from '../se
 import { useUi, type AiContext } from './ui.ts';
 import { navigate } from './router.ts';
 import { Chip } from '../components/ui.tsx';
+import { Icon } from '../components/icons.tsx';
 import { extractKey, keyFallbacks } from '../../shared/ai.ts';
 
 interface Evidence { id: string; title: string; type: string; snippet: string }
@@ -226,89 +227,112 @@ export function AiPanel() {
   return (
     <aside className="ai-panel" role="complementary" aria-label="AI 助手" data-testid="ai-panel">
       <div className="ai-ctx">
-        <div className="row">
-          <strong>助手</strong>
-          <span className="spacer" />
-          <Chip tone="info">带入：{ctx.kind === 'none' ? '无' : `${ctx.kind}:${ctx.title}`}</Chip>
-          <Chip>范围：本空间</Chip>
-          <Chip tone={budget.used >= budget.limit ? 'warn' : ''}>预算：{budget.used}/{budget.limit} 条提案</Chip>
-          <button className="btn btn-ghost btn-icon" onClick={close} aria-label="收起助手" data-testid="ai-close">✕</button>
-        </div>
+        <span className="ai-ctx-title">助手</span>
+        <span className="ai-ctx-item">带入：{ctx.kind === 'none' ? '无' : ctx.title}</span>
+        <span className="ai-ctx-item" data-warn={budget.used >= budget.limit ? '1' : '0'}>提案 {budget.used}/{budget.limit}</span>
+        <span className="spacer" />
+        <button className="btn btn-ghost btn-icon btn-sm" onClick={close} aria-label="收起助手" data-testid="ai-close">
+          <Icon name="close" size={15} />
+        </button>
       </div>
 
       <div className="ai-log" ref={logRef}>
         {msgs.length === 0 && (
-          <div>
-            <div className="ai-msg ai-msg-ai">
+          <div className="ai-intro">
+            <p className="ai-intro-text">
               我能看到的只有你这个空间里的真实内容，回答都会附上出处。检索不到我会直说，不会编。
-              <div className="ai-evidence">
-                允许的动作：检索 / 打开 / 衍生笔记 / 采集 / 建任务 / 生成提案。要改正文必须你逐条确认。
-              </div>
+            </p>
+            <div className="ai-allow">
+              允许的动作：检索 / 打开 / 衍生笔记 / 采集 / 建任务 / 生成提案。要改正文必须你逐条确认。
             </div>
-            <div className="row row-wrap" style={{ marginTop: 8 }}>
+            <div className="ai-starters">
               {SUGGESTIONS.map((s) => (
-                <button key={s} className="btn btn-sm" onClick={() => void ask(s)} data-testid="ai-suggest">{s}</button>
+                <button key={s} className="ai-starter" onClick={() => void ask(s)} data-testid="ai-suggest">
+                  <span>{s}</span>
+                  <Icon name="arrow" size={12} />
+                </button>
               ))}
             </div>
           </div>
         )}
+
         {msgs.map((m, i) => (
-          <div key={i} className={`ai-msg ${m.role === 'me' ? 'ai-msg-me' : 'ai-msg-ai'}`} data-testid={m.role === 'me' ? 'ai-msg-me' : 'ai-msg-ai'}>
-            {m.text}
-            {m.evidence && m.evidence.length > 0 && (
-              <div className="ai-evidence">
-                <div className="small muted" style={{ marginBottom: 4 }}>依据（{m.evidence.length} 条，点击可跳转）：</div>
-                {m.evidence.map((e) => (
-                  <div key={e.id} style={{ marginBottom: 4 }}>
-                    <a
-                      href="#"
-                      onClick={(ev) => {
-                        ev.preventDefault();
-                        close();
-                        navigate(e.type === 'event' ? 'agent' : e.type === 'note' ? 'editor' : 'reader', { id: e.id, rep: e.id });
-                      }}
-                    >
-                      {e.title}
-                    </a>
-                    <div className="small muted ellipsis">{e.snippet}</div>
-                  </div>
-                ))}
+          m.role === 'me' ? (
+            <div key={i} className="ai-msg ai-msg-me" data-testid="ai-msg-me">{m.text}</div>
+          ) : (
+            <article key={i} className="ai-reply" data-testid="ai-msg-ai">
+              <div className="ai-reply-head">
+                <span className="ai-reply-mark" aria-hidden="true">✦</span>
+                <span>助手</span>
+                {!!m.evidence?.length && <span className="ai-reply-cite">依据 {m.evidence.length}</span>}
               </div>
-            )}
-            {m.actions && m.actions.length > 0 && (
-              <div className="row row-wrap" style={{ marginTop: 8 }}>
-                {m.actions.map((a, j) => (
-                  <button
-                    key={j}
-                    className="btn btn-sm"
-                    data-testid="ai-action"
-                    onClick={() => {
-                      void a.run();
-                    }}
-                  >
-                    {a.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+              <div className="ai-reply-body">{m.text}</div>
+
+              {!!m.evidence?.length && (
+                <ol className="ai-cites">
+                  {m.evidence.map((e, j) => (
+                    <li key={e.id}>
+                      <span className="ai-cite-no">{j + 1}</span>
+                      <div className="ai-cite-main">
+                        <a
+                          href="#"
+                          onClick={(ev) => {
+                            ev.preventDefault();
+                            close();
+                            navigate(e.type === 'event' ? 'agent' : e.type === 'note' ? 'editor' : 'reader', { id: e.id, rep: e.id });
+                          }}
+                        >
+                          {e.title}
+                        </a>
+                        <div className="ai-cite-snip ellipsis">{e.snippet}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+
+              {!!m.actions?.length && (
+                <div className="ai-acts">
+                  {m.actions.map((a, j) => (
+                    <button key={j} className="btn btn-sm" data-testid="ai-action" onClick={() => { void a.run(); }}>
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </article>
+          )
         ))}
-        {busy && <div className="row muted small"><span className="spin" /> 在库里找…</div>}
+
+        {busy && <div className="ai-thinking"><span className="spin" /> 在库里找…</div>}
       </div>
 
-      <textarea
-        className="ai-input"
-        placeholder="问点什么，回车发送（Shift+回车换行）"
-        value={input}
-        data-testid="ai-input"
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            void ask(input);
-          }
-        }}
-      />
+      <div className="ai-composer">
+        <textarea
+          className="ai-input"
+          placeholder="问点什么…"
+          value={input}
+          rows={2}
+          data-testid="ai-input"
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void ask(input);
+            }
+          }}
+        />
+        <div className="ai-composer-foot">
+          <span className="ai-composer-hint">回车发送 · Shift+回车换行</span>
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={!input.trim() || busy}
+            onClick={() => void ask(input)}
+          >
+            发送
+          </button>
+        </div>
+      </div>
     </aside>
   );
 }
@@ -319,7 +343,8 @@ export function AiFab() {
   if (open) return null;
   return (
     <button className="ai-fab" onClick={() => openAi()} aria-label="打开 AI 助手" data-testid="ai-fab">
-      ✦
+      <Icon name="assistant" size={15} />
+      助手
     </button>
   );
 }

@@ -1,7 +1,8 @@
 /** 系统域：数据在哪、谁能写、花了多少、坏没坏 */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Card, Stat, Chip, Empty, Spinner, ErrorBox, Bar, Field, fmtBytes } from '../../components/ui.tsx';
+import { Card, PageHead, StatBand, Chip, Empty, Spinner, PageSkeleton, ErrorBox, Bar, Field, fmtBytes } from '../../components/ui.tsx';
+import { Icon } from '../../components/icons.tsx';
 import { useSystem, useManifest, useJournal, useRefresh } from '../../services/use.ts';
 import { endpoints, type ReconcileView, type JournalEventView } from '../../services/api.ts';
 import { useUi } from '../../app/ui.ts';
@@ -29,8 +30,15 @@ const OP_LABEL: Record<string, string> = {
   revert: '撤销', external_edit: '未署名改动', reconcile: '对账',
 };
 
-export function StoragePage() {
-  const { data, isLoading, error, refetch } = useSystem();
+/** 存储适配器能力：字段名是给程序看的，界面要说人话 */
+const CAP_LABEL: Record<string, string> = {
+  conditionalWrite: '条件写（CAS）',
+  versioning: '版本历史',
+  watch: '文件监听',
+  rangeRead: '分片读取（Range）',
+};
+
+export function StoragePage() {  const { data, isLoading, error, refetch } = useSystem();
   if (isLoading) return <Spinner />;
   if (error) return <ErrorBox error={error} onRetry={() => void refetch()} />;
   if (!data) return null;
@@ -39,52 +47,82 @@ export function StoragePage() {
 
   return (
     <div className="content-wide">
-      <div className="grid grid-4" style={{ marginBottom: 16 }}>
-        <Stat num={data.stats.works} label="作品" />
-        <Stat num={data.stats.parts} label="章节" />
-        <Stat num={data.stats.reps} label="载体" hint="界面上不出现这个数，它只在存储核算里" />
-        <Stat num={fmtBytes(data.stats.assetBytes)} label="附件体积" />
-      </div>
+      <PageHead
+        eyebrow="系统 · 空间"
+        title="空间与存储"
+        lede="一个空间一个根目录。文件是事实源，索引是可丢弃的派生：删掉 state/*.db，重启会从 Markdown 重建。"
+      />
+      <StatBand
+        items={[
+          { num: data.stats.works, label: '作品' },
+          { num: data.stats.parts, label: '章节' },
+          // 载体数界面上不出现这个数，它只在存储核算里
+          { num: data.stats.reps, label: '载体' },
+          { num: fmtBytes(data.stats.assetBytes), label: '附件体积' },
+        ]}
+      />
 
-      <Card title="空间" desc="一个空间一个根目录，WPS 同步的仍是这个根">
-        <div className="grid grid-2">
-          <div><span className="small muted">名称</span><div>{data.space.name}</div></div>
-          <div><span className="small muted">根目录</span><div className="mono">{data.space.root}</div></div>
-          <div><span className="small muted">时区</span><div>{data.space.tz}</div></div>
-          <div><span className="small muted">布局版本</span><div>layout 2</div></div>
-        </div>
-      </Card>
+      <section className="section" style={{ marginTop: 'var(--sp-6)' }}>
+        <h2 className="rubric">
+          <span className="rubric-no">01</span>
+          空间
+          <span className="rubric-rule" />
+          <span className="rubric-meta">一个进程一个空间</span>
+        </h2>
+        <dl className="kv">
+          <div><dt>名称</dt><dd>{data.space.name}</dd></div>
+          <div><dt>时区</dt><dd>{data.space.tz}</dd></div>
+          <div className="kv-wide"><dt>根目录</dt><dd className="mono">{data.space.root}</dd></div>
+          <div><dt>布局版本</dt><dd>layout 2</dd></div>
+        </dl>
+      </section>
 
-      <Card title="存储适配" desc="两个实现：本地目录（条件写）与 WPS 同步盘（能力降级）">
-        <div className="row row-wrap" style={{ marginBottom: 8 }}>
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">02</span>
+          存储适配
+          <span className="rubric-rule" />
+          <span className="rubric-meta mono">{data.storage.adapter}</span>
+        </h2>
+        <div className="caps" style={{ marginTop: 12 }}>
           {Object.entries(cap).map(([k, v]) => (
-            <Chip key={k} tone={v ? 'ok' : 'warn'}>{k}: {String(v)}</Chip>
+            <div key={k} className="cap" style={{ gridTemplateColumns: '44px minmax(0, 1fr) auto' }}>
+              <span className="cap-flag" data-write={v ? '0' : '1'}>{v ? '支持' : '降级'}</span>
+              <span>{CAP_LABEL[k] ?? k}</span>
+              <span className="cap-event mono">{String(v)}</span>
+            </div>
           ))}
         </div>
-        <div className="small" style={{ marginBottom: 8 }}>当前适配器：<strong>{data.storage.adapter}</strong></div>
-        <div className="card" style={{ borderColor: 'var(--warn)' }}>
-          <div className="small">{data.storage.wpsNotice}</div>
+        <div className="notice" style={{ marginTop: 12 }}>
+          <strong>WPS 同步盘的能力降级</strong>
+          <span>{data.storage.wpsNotice}</span>
         </div>
-      </Card>
+      </section>
 
-      <Card title="文件清单" desc={`${data.storage.assets.length} 个 · ${fmtBytes(data.storage.assetBytes)}`}>
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">03</span>
+          文件清单
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{data.storage.assets.length} 个 · {fmtBytes(data.storage.assetBytes)}</span>
+        </h2>
         {data.storage.assets.length === 0
-          ? <Empty title="还没有附件" />
+          ? <Empty title="还没有附件" desc="上传的图片和原件会落在 assets/ 下，这里只是清单。" />
           : (
             <table className="table">
-              <thead><tr><th>路径</th><th>类型</th><th style={{ width: 100 }}>大小</th></tr></thead>
+              <thead><tr><th>路径</th><th style={{ width: 90 }}>类型</th><th style={{ width: 90 }} className="mono">大小</th></tr></thead>
               <tbody>
                 {data.storage.assets.map((a) => (
                   <tr key={a.path}>
                     <td className="mono ellipsis">{a.path}</td>
-                    <td><Chip>{a.kind}</Chip></td>
-                    <td className="small muted">{fmtBytes(a.bytes)}</td>
+                    <td><span className="hit-type">{a.kind}</span></td>
+                    <td className="mono muted">{fmtBytes(a.bytes)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-      </Card>
+      </section>
     </div>
   );
 }
@@ -125,76 +163,92 @@ export function AgentPage() {
 
   return (
     <div className="content-wide">
-      <Card
+      <PageHead
+        eyebrow="系统 · 接入"
         title="Agent 接入"
-        desc="能力表、事件流、未署名改动，三块缺一不可"
+        lede="能力表、事件流、未署名改动，三块缺一不可。外部 Agent 和人在界面上走的是同一套读写路径，不留暗门。"
         actions={
           <>
-            <button className="btn btn-sm" onClick={() => openSheet('journal')} data-testid="agent-log">补一条事件</button>
+            <button className="btn btn-sm btn-quiet" onClick={() => openSheet('journal')} data-testid="agent-log">补一条事件</button>
             <button className="btn btn-sm btn-primary" onClick={() => void runReconcile()} disabled={busy} data-testid="agent-reconcile">
               {busy ? '对账中…' : '对账'}
             </button>
           </>
         }
-      >
-        <div className="small muted" style={{ marginBottom: 10 }}>
-          外部 Agent（Claude Code、Codebuddy……）不用猜接口，先跑一条
-          <code> habitat agent manifest </code>
-          就能拿到下面这张能力表：每项都写清了「人怎么点 / AI 怎么调 / 会不会写 / 留什么事件」。
-          全流程和人在界面上走的是同一套，不留暗门。
-        </div>
-        <div className="grid grid-3">
+      />
+
+      <section className="section" style={{ marginTop: 'var(--sp-6)' }}>
+        <h2 className="rubric">
+          <span className="rubric-no">01</span>
+          能力表
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{mf?.manifest.capabilities.length ?? 0} 项</span>
+        </h2>
+        <p className="section-note">
+          跑一句 <code>habitat agent manifest</code> 就能拿到这张表：每项写清了「人怎么点 / AI 怎么调 / 会不会写 / 留什么事件」。
+        </p>
+        <div className="caps">
           {(mf?.manifest.capabilities ?? []).map((c) => (
-            <div key={c.id} className="card">
-              <div className="row"><strong>{c.name}</strong><span className="spacer" /><Chip tone={c.mutating ? 'warn' : 'ok'}>{c.mutating ? '会写' : '只读'}</Chip></div>
-              <div className="small muted" style={{ marginTop: 4 }}>人：{c.human}</div>
-              <div className="small muted">AI：{c.agent}</div>
-              <div className="small muted">写：{c.writes}</div>
-              <div className="small muted">事件：{c.event}</div>
-              <code className="small" style={{ display: 'block', marginTop: 6, wordBreak: 'break-all' }}>{c.command}</code>
+            <div key={c.id} className="cap" style={{ gridTemplateColumns: '44px 120px minmax(0,1fr) auto' }}>
+              <span className="cap-flag" data-write={c.mutating ? '1' : '0'}>{c.mutating ? '会写' : '只读'}</span>
+              <span className="cap-name">{c.name}</span>
+              <span className="cap-agent mono ellipsis" title={c.command}>{c.command}</span>
+              <span className="cap-event mono">{c.event}</span>
             </div>
           ))}
         </div>
-      </Card>
+      </section>
 
       {report && (
-        <Card title="对账结果" desc={`${report.at.slice(0, 16)} · 查了 ${report.checked} 个文件`}>
+        <section className="section">
+          <h2 className="rubric">
+            <span className="rubric-no">02</span>
+            对账结果
+            <span className="rubric-rule" />
+            <span className="rubric-meta">{report.at.slice(5, 16).replace('T', ' ')} · 查了 {report.checked} 个文件</span>
+          </h2>
           {report.baseline ? (
-            <div className="small" style={{ marginBottom: 8 }}>
-              这是第一次对账，只建了基线（{report.checked} 个文件的 sha256 记下来了）。
-              从下一次开始，谁绕过接口改了文件，这里能指出来。
-            </div>
+            <p className="section-note">
+              这是第一次对账，只建了基线（{report.checked} 个文件的 sha256 记下来了）。从下一次开始，谁绕过接口改了文件，这里能指出来。
+            </p>
           ) : (
-            <div className="row row-wrap" style={{ marginBottom: 8 }}>
-              <Chip tone="ok">署名改动 {report.signed.length}</Chip>
-              <Chip tone={report.unsigned.length ? 'danger' : 'ok'}>未署名 {report.unsigned.length}</Chip>
-              <Chip>新增 {report.added.length}</Chip>
-              <Chip>删除 {report.removed.length}</Chip>
+            <div className="ledger" style={{ margin: '12px 0 16px' }}>
+              <div className="ledger-cell"><b className="ledger-num">{report.signed.length}</b><span className="ledger-label">署名改动</span></div>
+              <div className="ledger-cell" data-zero={report.unsigned.length ? '0' : '1'}>
+                <b className="ledger-num" data-tone={report.unsigned.length ? 'danger' : undefined}>{report.unsigned.length}</b>
+                <span className="ledger-label">未署名</span>
+              </div>
+              <div className="ledger-cell"><b className="ledger-num">{report.added.length}</b><span className="ledger-label">新增</span></div>
+              <div className="ledger-cell"><b className="ledger-num">{report.removed.length}</b><span className="ledger-label">删除</span></div>
             </div>
           )}
           {report.unsigned.map((u) => (
-            <div key={u.path} className="small mono" style={{ color: 'var(--danger)' }}>⚠ {u.path}</div>
+            <div key={u.path} className="part">
+              <span className="chg-check" data-ok="0"><Icon name="close" size={12} /></span>
+              <span className="part-title mono">{u.path}</span>
+            </div>
           ))}
-        </Card>
+        </section>
       )}
 
-      <Card
-        title="事件流"
-        desc="事件只追加：对象可以被覆盖，事件不会"
-        actions={
-          <select className="select" style={{ width: 150 }} value={filter} onChange={(e) => setFilter(e.target.value)} data-testid="journal-filter">
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">03</span>
+          事件流
+          <span className="rubric-rule" />
+          <select className="select" style={{ width: 148, height: 26, fontSize: 'var(--t-xs)' }} value={filter} onChange={(e) => setFilter(e.target.value)} data-testid="journal-filter">
             <option value="">全部主体</option>
             <option value="human">只看我</option>
             <option value="agent:">只看 AI</option>
             <option value="system">只看系统</option>
             <option value="external:unknown">只看未署名</option>
           </select>
-        }
-      >
-        {isLoading ? <Spinner /> : events.length === 0
-          ? <Empty title="还没有事件" desc="任何写操作都会留一条" />
-          : events.slice(0, 60).map((e) => <EventRow key={e.id} e={e} onClaim={() => void claim(e.id)} />)}
-      </Card>
+        </h2>
+        <p className="section-note">事件只追加：对象可以被覆盖，事件不会。</p>
+        {isLoading ? <PageSkeleton rows={4} title={false} /> : events.length === 0
+          ? <Empty title="还没有事件" desc="任何写操作都会留一条。" />
+          : <div className="stagger">{events.slice(0, 60).map((e) => <EventRow key={e.id} e={e} onClaim={() => void claim(e.id)} />)}</div>}
+      </section>
     </div>
   );
 }
@@ -202,21 +256,20 @@ export function AgentPage() {
 function EventRow({ e, onClaim }: { e: JournalEventView; onClaim: () => void }) {
   return (
     <div className="ev" data-testid="journal-event">
+      <span className="ev-time mono">{e.at.slice(5, 16).replace('T', ' ')}</span>
       <span className={`ev-dot ${actorClass(e.actor)}`} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="row">
-          <strong className="small">{actorLabel(e.actor)}</strong>
-          <Chip>{OP_LABEL[e.op] ?? e.op}</Chip>
-          <Chip>{e.phase}</Chip>
-          <span className="spacer" />
-          <span className="small muted">{e.at.slice(0, 16)}</span>
+      <div className="ev-body">
+        <div className="ev-line">
+          <span className="ev-actor">{actorLabel(e.actor)}</span>
+          <span className="ev-op">{OP_LABEL[e.op] ?? e.op}</span>
+          {e.phase && <span className="ev-phase mono">{e.phase}</span>}
         </div>
-        <div className="small ellipsis">{e.summary}</div>
-        <div className="small muted mono ellipsis">{e.target}</div>
+        <div className="ev-summary ellipsis">{e.summary}</div>
+        <div className="ev-target mono ellipsis">{e.target}</div>
         {e.actor === 'external:unknown' && !e.claimedBy && (
-          <button className="btn btn-sm" onClick={onClaim} data-testid="claim-btn">认领这条改动</button>
+          <button className="btn btn-sm btn-quiet" onClick={onClaim} data-testid="claim-btn">认领这条改动</button>
         )}
-        {e.claimedBy && <div className="small" style={{ color: 'var(--ok)' }}>已被 {e.claimedBy} 认领（原记录保留）</div>}
+        {e.claimedBy && <div className="ev-claimed">已被 {e.claimedBy} 认领（原记录保留）</div>}
       </div>
     </div>
   );
@@ -236,38 +289,71 @@ export function BudgetPage() {
 
   return (
     <div className="content-wide">
-      <Card title="预算" desc="AI 提案过量，人就会关掉它。默认每天 ≤3 条，只约束 agent，不限制你自己">
-        <div className="row" style={{ marginBottom: 8 }}>
-          <span className="small muted" style={{ width: 120 }}>今天已用</span>
-          <div style={{ width: 200 }}>
-            <Bar value={(data?.budget.usedToday ?? 0) / Math.max(1, data?.budget.dailyProposalLimit ?? 3)} />
-          </div>
-          <span className="small mono">{data?.budget.usedToday ?? 0} / {data?.budget.dailyProposalLimit ?? 3}</span>
-        </div>
-        <div className="small muted">
-          超了不是报错，是不再推新的提案——已经有的一定让你看到。
-        </div>
-      </Card>
+      <PageHead
+        eyebrow="系统 · 预算"
+        title="权限与预算"
+        lede="AI 提案过量，人就会关掉它。默认每天 ≤3 条，只约束 agent，不限制你自己。"
+      />
 
-      <Card title="权限四档">
-        {perm.map((p) => (
-          <div key={p.name} className="row" style={{ padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-            <Chip tone={p.tone}>{p.need}</Chip>
-            <strong style={{ width: 130 }}>{p.name}</strong>
-            <span className="small muted" style={{ flex: 1 }}>{p.eg}</span>
+      <section className="section" style={{ marginTop: 'var(--sp-6)' }}>
+        <h2 className="rubric">
+          <span className="rubric-no">01</span>
+          今日配额
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{data?.budget.usedToday ?? 0} / {data?.budget.dailyProposalLimit ?? 3}</span>
+        </h2>
+        <div className="quota">
+          <div className="quota-num">
+            {data?.budget.usedToday ?? 0}
+            <small>/{data?.budget.dailyProposalLimit ?? 3}</small>
           </div>
-        ))}
-      </Card>
+          {/* 额度是个小数字，用格子比进度条诚实：剩几条一眼数得出来 */}
+          <div className="quota-ticks" aria-hidden="true">
+            {Array.from({ length: Math.max(1, data?.budget.dailyProposalLimit ?? 3) }).map((_, i) => (
+              <i key={i} data-on={i < (data?.budget.usedToday ?? 0) ? '1' : '0'} />
+            ))}
+          </div>
+          <p className="quota-note">
+            超了不是报错，是不再推新的提案——已经有的一定让你看到。
+          </p>
+        </div>
+      </section>
 
-      <Card title="会写东西的能力" desc="只有这些入口会落盘">
-        {(mf?.manifest.capabilities ?? []).filter((c) => c.mutating).map((c) => (
-          <div key={c.id} className="row" style={{ padding: '5px 0' }}>
-            <strong style={{ width: 100 }}>{c.name}</strong>
-            <span className="small muted" style={{ flex: 1 }}>{c.writes}</span>
-            <Chip>{c.event}</Chip>
-          </div>
-        ))}
-      </Card>
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">02</span>
+          权限四档
+          <span className="rubric-rule" />
+        </h2>
+        <div className="tiers">
+          {perm.map((p, i) => (
+            <div key={p.name} className="tier" data-tone={p.tone}>
+              <span className="tier-no">{String(i + 1).padStart(2, '0')} · {p.need}</span>
+              <strong>{p.name}</strong>
+              <span className="tier-desc">{p.eg}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">03</span>
+          会写东西的能力
+          <span className="rubric-rule" />
+          <span className="rubric-meta">只有这些入口会落盘</span>
+        </h2>
+        <div className="caps">
+          {(mf?.manifest.capabilities ?? []).filter((c) => c.mutating).map((c) => (
+            <div key={c.id} className="cap" style={{ gridTemplateColumns: '44px 120px minmax(0,1fr) auto' }}>
+              <span className="cap-flag" data-write="1">会写</span>
+              <span className="cap-name">{c.name}</span>
+              <span className="cap-agent ellipsis">{c.writes}</span>
+              <span className="cap-event mono">{c.event}</span>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -389,15 +475,25 @@ export function ChannelsPage() {
 
   return (
     <div className="content-wide">
-      <Card
-        title="邮件通道"
-        desc="不看网页也能收到提醒：日程到点前 30 分钟、每天第一次发现逾期任务"
+      <PageHead
+        eyebrow="系统 · 通知"
+        title="通知渠道"
+        lede="不看网页也能收到提醒：日程到点前 30 分钟、每天第一次发现逾期任务。密钥不回显，留空就沿用已保存的。"
         actions={
-          <Chip tone={okMail ? 'ok' : 'warn'} data-testid="notify-status">
+          <span className="mail-state" data-ok={okMail ? '1' : '0'} data-testid="notify-status">
+            <span className="mail-dot" aria-hidden="true" />
             {okMail ? `已连通 → ${data?.to}` : `未配置${data?.missing?.length ? `（缺 ${data.missing.join('、')}）` : ''}`}
-          </Chip>
+          </span>
         }
-      >
+      />
+
+      <section className="section" style={{ marginTop: 'var(--sp-6)' }}>
+        <h2 className="rubric">
+          <span className="rubric-no">01</span>
+          SMTP 发信
+          <span className="rubric-rule" />
+          <span className="rubric-meta">QQ / 163 / 企业邮都能用</span>
+        </h2>
         <div className="grid grid-2">
           <Field label="发件邮箱" hint="用它的 SMTP 服务发信">
             <input
@@ -477,43 +573,57 @@ export function ChannelsPage() {
           </button>
           <span className="small muted">配置存在 {data?.configPath}（不在知识库里，免得跟着云盘同步）</span>
         </div>
-      </Card>
+      </section>
 
       {mailReport && (
-        <Card title="邮件投递预演" desc={`未读 ${mailReport.fetched} 封 · 会收 ${mailReport.captured.length} · 挡掉 ${mailReport.skipped.length}`} data-testid="mail-report">
+        <section className="section" data-testid="mail-report">
+          <h2 className="rubric">
+            <span className="rubric-no">02</span>
+            邮件投递预演
+            <span className="rubric-rule" />
+            <span className="rubric-meta">未读 {mailReport.fetched} · 会收 {mailReport.captured.length} · 挡掉 {mailReport.skipped.length}</span>
+          </h2>
           {mailReport.captured.map((x, i) => (
-            <div key={i} className="small">✓ {x.subject}</div>
+            <div key={i} className="part">
+              <span className="chg-check" data-ok="1"><Icon name="check" size={12} /></span>
+              <span className="part-title">{x.subject}</span>
+            </div>
           ))}
           {mailReport.skipped.slice(0, 5).map((x, i) => (
-            <div key={`s${i}`} className="small muted">· {x.subject}（{x.skipped}）</div>
+            <div key={`s${i}`} className="part">
+              <span className="chg-check" data-ok="0"><Icon name="close" size={12} /></span>
+              <span className="part-title muted">{x.subject}（{x.skipped}）</span>
+            </div>
           ))}
-          <div className="small muted" style={{ marginTop: 6 }}>只看不收。要真的收下，跑 <code>habitat inbox-mail --fetch</code>。</div>
-        </Card>
+          <p className="section-note">只看不收。要真的收下，跑 <code>habitat inbox-mail --fetch</code>。</p>
+        </section>
       )}
 
-      <Card
-        title="这一轮会提醒什么"
-        desc="只算不发，先看对不对；同一条日程只提醒一次"
-        actions={
-          <button className="btn btn-sm" onClick={() => void check()} disabled={busy !== ''} data-testid="notify-check">
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">03</span>
+          这一轮会提醒什么
+          <span className="rubric-rule" />
+          <button className="btn btn-sm btn-quiet" onClick={() => void check()} disabled={busy !== ''} data-testid="notify-check">
             检查一次
           </button>
-        }
-      >
+        </h2>
+        <p className="section-note">只算不发，先看对不对；同一条日程只提醒一次。</p>
         {!report ? (
-          <div className="small muted">点「检查一次」，看看现在有没有快到点的日程或逾期任务。</div>
+          <p className="section-note">点「检查一次」，看看现在有没有快到点的日程或逾期任务。</p>
         ) : report.sent.length === 0 ? (
-          <div className="small muted">
+          <p className="section-note">
             这一轮没有要提醒的。{report.skipped.length ? `（${report.skipped.join('；')}）` : ''}
-          </div>
+          </p>
         ) : (
           report.sent.map((x, i) => (
-            <div key={i} className="small">
-              · {x.kind}：{x.title}
+            <div key={i} className="part">
+              <span className="hit-type">{x.kind}</span>
+              <span className="part-title">{x.title}</span>
             </div>
           ))
         )}
-      </Card>
+      </section>
     </div>
   );
 }
@@ -585,34 +695,51 @@ export function HealthPage() {
 
   return (
     <div className="content-wide">
-      <Card title="健康" desc="坏没坏要能一眼看出来，而不是等它悄悄错下去">
+      <PageHead
+        eyebrow="系统 · 健康"
+        title="健康与恢复"
+        lede="坏没坏要能一眼看出来，而不是等它悄悄错下去。四项检查都是算的，不是猜的。"
+        actions={
+          <button className="btn btn-sm btn-primary" onClick={() => void reindex()} disabled={busy === 'reindex'}>
+            {busy === 'reindex' ? '重建中…' : '重建索引'}
+          </button>
+        }
+      />
+
+      <div className="vitals">
         {checks.map((c) => (
-          <div key={c.name} className="check-row" style={{ padding: '7px 0', borderBottom: '1px solid var(--border)' }} data-testid="health-check">
-            <span className="check-mark">{c.ok ? '✓' : '✕'}</span>
-            <strong style={{ width: 120 }}>{c.name}</strong>
-            <span className="small muted" style={{ flex: 1 }}>{c.detail}</span>
-            <Chip tone={c.ok ? 'ok' : 'danger'}>{c.ok ? '正常' : '要处理'}</Chip>
+          <div key={c.name} className="vital" data-ok={c.ok ? '1' : '0'} data-testid="health-check">
+            <div className="vital-head">
+              <span className="vital-dot" aria-hidden="true" />
+              <strong>{c.name}</strong>
+              <span className="vital-state">{c.ok ? '正常' : '要处理'}</span>
+            </div>
+            <p className="vital-detail">{c.detail}</p>
           </div>
         ))}
-      </Card>
+      </div>
 
-      <Card
-        title="断链"
-        desc={links?.items.length ? `${links.items.length} 个目标被引用但还不存在；补一条就通` : '没有断链'}
-        data-testid="broken-links"
-      >
-        {!links?.items.length
-          ? <div className="small muted">所有 [[…]] 都能解析到对象。</div>
-          : links.items.map((it) => (
-            <div key={it.target} className="row row-wrap" style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-              <span className="small mono" style={{ flex: 1, minWidth: 0 }}>[[{it.target}]]</span>
-              <span className="small muted">{it.refs.length} 处引用</span>
-              <button className="btn btn-sm" disabled={busy === it.target} onClick={() => void fixLink(it.target)} data-testid="fix-link">
-                {busy === it.target ? '建中…' : '补一条'}
-              </button>
-            </div>
-          ))}
-      </Card>
+      <section className="section">
+        <h2 className="rubric">
+          <span className="rubric-no">◍</span>
+          断链
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{links?.items.length ? `${links.items.length} 个目标缺失` : '没有断链'}</span>
+        </h2>
+        <div data-testid="broken-links">
+          {!links?.items.length
+            ? <p className="section-note">所有 [[…]] 都能解析到对象。这是索引健康的直接证据。</p>
+            : links.items.map((it) => (
+              <div key={it.target} className="part" style={{ padding: '9px 0' }}>
+                <span className="mono" style={{ flex: 1, minWidth: 0 }}>[[{it.target}]]</span>
+                <span className="small muted">{it.refs.length} 处引用</span>
+                <button className="btn btn-sm btn-quiet" disabled={busy === it.target} onClick={() => void fixLink(it.target)} data-testid="fix-link">
+                  {busy === it.target ? '建中…' : '补一条'}
+                </button>
+              </div>
+            ))}
+        </div>
+      </section>
 
       <Card title="恢复" desc="文件是事实源，所以恢复的手段都很朴素">
         <div className="grid grid-2">

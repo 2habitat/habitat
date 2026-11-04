@@ -1,127 +1,182 @@
-/* 语义令牌：三套主题（凝脂 / 漂青 / 玄墨）+ 6 档字号 + 3 档圆角 */
+/* ==========================================================================
+   Habitat 设计令牌 · 「档案刊物」体系
+   --------------------------------------------------------------------------
+   三线字体：衬线做结构（标题/数字）、无衬线做阅读（正文）、等宽做数据。
+   中文界面换不了字形，个性只能来自「衬线/无衬线的对照 + 字号跳跃 + 字距」。
+   60-30-10：纸（60）· 墨（30）· 朱砂（10）。
+   三套主题：凝脂（暖纸/朱砂）· 漂青（青瓷/松墨）· 玄墨（夜纸/陶土）
+   ========================================================================== */
+
 :root {
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
-  --font-serif: 'Songti SC', 'SimSun', Georgia, serif;
+  /* 结构用衬线：界面里 99% 的中文产品都用无衬线，衬线标题本身就是辨识度 */
+  --font-display: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', Georgia, 'Times New Roman', serif;
+  --font-sans: 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Consolas, monospace;
+  /* 兼容旧引用 */
+  --font-serif: var(--font-display);
 
-  --fs-1: 11px; --fs-2: 12px; --fs-3: 13px; --fs-4: 15px; --fs-5: 18px; --fs-6: 22px; --fs-7: 28px;
-  /* 正文默认按方案 §19 定在 17px 附近，不再跟着 --fs-4(15px) 走 */
-  --fs-body: 17px;
-  /* 阅读行宽三档，方案要求「可调」 */
-  --reading-w: 652px;
+  /* ---- 字号阶梯（rem，跟随 html 的 15/16/18 三档） ---- */
+  --t-display: 2.75rem;  /* 44 · 页面大标题 */
+  --t-h1: 2rem;          /* 32 · 区块主标题 */
+  --t-h2: 1.375rem;      /* 22 · 分节标题 */
+  --t-h3: 1.0625rem;     /* 17 · 行标题 */
+  --t-body: 0.9375rem;   /* 15 · 正文 */
+  --t-sm: 0.8125rem;     /* 13 · 次要 */
+  --t-xs: 0.75rem;       /* 12 · 标签 */
+  --t-micro: 0.6875rem;  /* 11 · 眉标（大写 + 字距） */
 
-  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+  /* 旧档位（页面内联 style 在用，保留名字，值重新对齐阶梯） */
+  --fs-1: 0.6875rem; --fs-2: 0.75rem; --fs-3: 0.8125rem; --fs-4: 0.875rem;
+  --fs-5: 1.0625rem; --fs-6: 1.375rem; --fs-7: 2rem;
+  --fs-body: 1.0625rem;  /* 阅读正文 17px */
+  --reading-w: 40rem;
 
-  --lh-tight: 1.35; --lh-body: 1.7;
+  --lh-tight: 1.25;
+  --lh-snug: 1.45;
+  --lh-body: 1.72;
 
-  --sidebar-w: 216px;
-  --topbar-h: 52px;
-  --radius: 8px;
+  /* ---- 间距（4 基准，8 档） ---- */
+  --sp-1: 0.25rem; --sp-2: 0.5rem; --sp-3: 0.75rem; --sp-4: 1rem;
+  --sp-5: 1.5rem; --sp-6: 2rem; --sp-7: 3rem; --sp-8: 4rem;
+
+  --sidebar-w: 236px;
+  --topbar-h: 56px;
+
+  --radius: 4px;
+  --radius-sm: 3px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
   --dur: 140ms;
+  --dur-2: 260ms;
+  --ease: cubic-bezier(.22, .61, .36, 1);
+  /* 只给「弹出/确认」类动效用，正文位移一律用 --ease，别到处回弹 */
+  --ease-spring: cubic-bezier(.34, 1.42, .64, 1);
+  --dur-fast: 120ms;
+  --dur-slow: 420ms;
+
+  /* 唯一允许的投影：浮层。平面内容一律用 hairline 分层 */
+  --shadow: 0 1px 1px rgba(28, 22, 14, .04);
+  --shadow-lg: 0 24px 64px -16px rgba(28, 22, 14, .30), 0 2px 8px rgba(28, 22, 14, .08);
+  --shadow-pop: 0 1px 0 rgba(255, 255, 255, .6) inset, 0 18px 44px -18px rgba(28, 22, 14, .34);
 }
 
-/* 字号档位：界面上可切换。17px 附近为默认，小档仍比原来的 13px 大 */
-:root[data-fs='sm'] { --fs-body: 15px; }
-:root[data-fs='md'] { --fs-body: 17px; }
-:root[data-fs='lg'] { --fs-body: 19px; }
+/* 字号三档：不是只放大正文，整个界面的 rem 一起走 */
+:root[data-fs='sm'] { font-size: 15px; }
+:root[data-fs='md'] { font-size: 16px; }
+:root[data-fs='lg'] { font-size: 18px; }
 
-/* 阅读行宽：中文长文 40–46 字/行 */
-:root[data-reading='narrow'] { --reading-w: 520px; }
-:root[data-reading='normal'] { --reading-w: 652px; }
-:root[data-reading='wide'] { --reading-w: 820px; }
+:root[data-reading='narrow'] { --reading-w: 32.5rem; }
+:root[data-reading='normal'] { --reading-w: 40.75rem; }
+:root[data-reading='wide'] { --reading-w: 51.25rem; }
 
-/* 圆角档位 */
-:root[data-radius='sharp'] { --radius: 2px; }
-:root[data-radius='soft'] { --radius: 8px; }
-:root[data-radius='round'] { --radius: 14px; }
+:root[data-radius='sharp'] { --radius: 2px; --radius-sm: 1px; --radius-lg: 3px; }
+:root[data-radius='soft'] { --radius: 4px; --radius-sm: 3px; --radius-lg: 8px; }
+:root[data-radius='round'] { --radius: 8px; --radius-sm: 6px; --radius-lg: 14px; }
 
-/* ---------- 凝脂（浅色，默认） ---------- */
+/* ---------------------------------------------------------------- 凝脂 */
 :root,
 :root[data-theme='ningzhi'] {
   color-scheme: light;
-  --bg: #f7f6f3;
-  --bg-sunken: #efece7;
-  --surface: #fffefb;
-  --surface-2: #faf8f4;
-  --surface-hover: #f2efe9;
-  --border: #e3ddd3;
-  --border-strong: #cdc4b6;
-  --text: #2b2825;
-  --text-2: #5f5952;
-  --text-3: #8d857b;
-  --accent: #8a6a4b;
-  --accent-soft: #f0e6da;
-  --accent-text: #fff;
-  --ok: #4a7c59;
-  --ok-soft: #e6efe8;
-  --warn: #a5761f;
-  --warn-soft: #f8efd9;
-  --danger: #a8443a;
-  --danger-soft: #f7e6e3;
-  --info: #3f6b8f;
-  --info-soft: #e4edf4;
-  --shadow: 0 1px 2px rgba(43, 40, 37, .06), 0 8px 24px rgba(43, 40, 37, .08);
-  --shadow-lg: 0 12px 48px rgba(43, 40, 37, .18);
-  --hl-yellow: #fff3bf; --hl-green: #d7f0dd; --hl-blue: #dbe8f7; --hl-pink: #fbe0e8;
-  --mark: #ffe9a8;
+
+  --paper: #f1ece1;
+  --bg: #f1ece1;
+  --bg-sunken: #e7e1d3;
+  --surface: #fbf7ed;
+  --surface-2: #f4eee2;
+  --surface-3: #ebe4d4;
+  --surface-hover: #efe8d9;
+
+  --border: #ddd5c4;
+  --border-strong: #c6bba6;
+  --rule: #d8cfbc;
+
+  --text: #1e1a15;
+  --text-2: #5b5346;
+  --text-3: #756c5e;
+
+  --accent: #b0432b;
+  --accent-ink: #8c3220;
+  --accent-soft: #f3ddd2;
+  --accent-text: #fffdf7;
+
+  --ok: #3d6b4f;      --ok-soft: #e2ece2;
+  --warn: #8d6118;    --warn-soft: #f6ead0;
+  --danger: #a3342a;  --danger-soft: #f6dfd9;
+  --info: #3a5d7d;    --info-soft: #e3ebf2;
+
+  --hl-yellow: #f8e9b0; --hl-green: #d9ebdb; --hl-blue: #dde8f2; --hl-pink: #f7dde4;
+  --mark: #f4df9e;
 }
 
-/* ---------- 漂青 ---------- */
+/* ---------------------------------------------------------------- 漂青 */
 :root[data-theme='piaoqing'] {
   color-scheme: light;
-  --bg: #f2f7f6;
-  --bg-sunken: #e7efed;
-  --surface: #fdfffe;
-  --surface-2: #f6fbfa;
-  --surface-hover: #eaf3f1;
-  --border: #d9e6e3;
-  --border-strong: #b6cfc9;
-  --text: #1f2e2b;
-  --text-2: #4d5f5b;
-  --text-3: #7b8d89;
-  --accent: #2f7d72;
-  --accent-soft: #dceceb;
-  --accent-text: #fff;
-  --ok: #35785c;
-  --ok-soft: #e0f0e7;
-  --warn: #9a6c17;
-  --warn-soft: #f9efd8;
-  --danger: #a03b34;
-  --danger-soft: #f8e5e2;
-  --info: #2f6480;
-  --info-soft: #e0eef4;
-  --shadow: 0 1px 2px rgba(31, 46, 43, .06), 0 8px 24px rgba(31, 46, 43, .08);
-  --shadow-lg: 0 12px 48px rgba(31, 46, 43, .18);
-  --hl-yellow: #fdf1c4; --hl-green: #d3efe0; --hl-blue: #d7e9f3; --hl-pink: #f9e0e6;
-  --mark: #ffe6a3;
+
+  --paper: #eaf1ee;
+  --bg: #eaf1ee;
+  --bg-sunken: #dfe9e5;
+  --surface: #f7fbf8;
+  --surface-2: #eef5f1;
+  --surface-3: #e2ece7;
+  --surface-hover: #e8f2ed;
+
+  --border: #d1e0da;
+  --border-strong: #b0c8c0;
+  --rule: #ccdcd5;
+
+  --text: #131f1c;
+  --text-2: #46564f;
+  --text-3: #6b7c74;
+
+  --accent: #1d6a60;
+  --accent-ink: #14514a;
+  --accent-soft: #d8eae4;
+  --accent-text: #f6fffc;
+
+  --ok: #2f6b4a;      --ok-soft: #dcece2;
+  --warn: #855d14;    --warn-soft: #f4e9ce;
+  --danger: #9c372c;  --danger-soft: #f4ded9;
+  --info: #2b5f7c;    --info-soft: #dcebf3;
+
+  --hl-yellow: #f2e7b4; --hl-green: #d2ebdd; --hl-blue: #d6e6f1; --hl-pink: #f5dde3;
+  --mark: #efdf9c;
 }
 
-/* ---------- 玄墨 ---------- */
+/* ---------------------------------------------------------------- 玄墨 */
 :root[data-theme='xuanmo'] {
   color-scheme: dark;
-  --bg: #16171a;
-  --bg-sunken: #101114;
-  --surface: #1e2024;
-  --surface-2: #24272c;
-  --surface-hover: #2b2f35;
-  --border: #33373e;
-  --border-strong: #4a5058;
-  --text: #e7e6e3;
-  --text-2: #b0aea9;
-  --text-3: #82807b;
-  --accent: #c9a37a;
-  --accent-soft: #2f2a22;
-  --accent-text: #1a1815;
-  --ok: #7fb99a;
-  --ok-soft: #1e2b24;
-  --warn: #d3ab5e;
-  --warn-soft: #2e281a;
-  --danger: #d98b80;
-  --danger-soft: #30211f;
-  --info: #8ab4d4;
-  --info-soft: #1d2730;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .36);
-  --shadow-lg: 0 12px 48px rgba(0, 0, 0, .6);
-  --hl-yellow: #5c4f1e; --hl-green: #24503a; --hl-blue: #23405a; --hl-pink: #57293a;
-  --mark: #6b5a20;
+
+  --paper: #121314;
+  --bg: #121314;
+  --bg-sunken: #0b0c0d;
+  --surface: #191a1c;
+  --surface-2: #1f2123;
+  --surface-3: #26282b;
+  --surface-hover: #24262a;
+
+  --border: #2e3134;
+  --border-strong: #474c50;
+  --rule: #33373a;
+
+  --text: #eae5da;
+  --text-2: #b2aca0;
+  --text-3: #8a8478;
+
+  --accent: #d98f63;
+  --accent-ink: #efb68f;
+  --accent-soft: #34251c;
+  --accent-text: #1a1410;
+
+  --ok: #6fb08d;      --ok-soft: #1c2a23;
+  --warn: #d3a75e;    --warn-soft: #2b2418;
+  --danger: #d9756a;  --danger-soft: #2e201e;
+  --info: #7fa9c8;    --info-soft: #1a252d;
+
+  --hl-yellow: #574a1c; --hl-green: #234634; --hl-blue: #21384a; --hl-pink: #4a2630;
+  --mark: #63531d;
+
+  --shadow-lg: 0 24px 64px -16px rgba(0, 0, 0, .8), 0 2px 8px rgba(0, 0, 0, .5);
+  --shadow-pop: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 44px -18px rgba(0, 0, 0, .8);
+  --shadow: 0 1px 1px rgba(0, 0, 0, .3);
 }

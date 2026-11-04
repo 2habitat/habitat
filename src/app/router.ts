@@ -3,6 +3,7 @@
  * 用法：navigate('reader', { work, rep })
  */
 import { useEffect, useState } from 'react';
+import type { IconName } from '../components/icons.tsx';
 
 export type RouteId =
   | 'today' | 'inbox' | 'calendar' | 'projects' | 'areas' | 'review'
@@ -11,38 +12,46 @@ export type RouteId =
   | 'assistant' | 'changes' | 'jobs' | 'automation'
   | 'storage' | 'agent' | 'budget' | 'files' | 'channels' | 'health' | 'account';
 
-export const ROUTES: { id: RouteId; path: string; group: string; title: string; icon: string }[] = [
-  { id: 'today', path: '/today', group: '行动', title: '今天', icon: '☀' },
-  { id: 'inbox', path: '/inbox', group: '行动', title: '收件箱', icon: '📥' },
-  { id: 'calendar', path: '/calendar', group: '行动', title: '日程', icon: '🗓' },
-  { id: 'projects', path: '/projects', group: '行动', title: '项目', icon: '◧' },
-  { id: 'areas', path: '/areas', group: '行动', title: '领域', icon: '◎' },
-  { id: 'review', path: '/review', group: '行动', title: '复盘', icon: '↺' },
+export const ROUTES: { id: RouteId; path: string; group: string; title: string; icon: IconName }[] = [
+  { id: 'today', path: '/today', group: '行动', title: '今天', icon: 'today' },
+  { id: 'inbox', path: '/inbox', group: '行动', title: '收件箱', icon: 'inbox' },
+  { id: 'calendar', path: '/calendar', group: '行动', title: '日程', icon: 'calendar' },
+  { id: 'projects', path: '/projects', group: '行动', title: '项目', icon: 'projects' },
+  { id: 'areas', path: '/areas', group: '行动', title: '领域', icon: 'areas' },
+  { id: 'review', path: '/review', group: '行动', title: '复盘', icon: 'review' },
 
-  { id: 'shelf', path: '/shelf', group: '知识', title: '书架', icon: '▤' },
-  { id: 'continue', path: '/continue', group: '知识', title: '继续阅读', icon: '▷' },
-  { id: 'compose', path: '/compose', group: '知识', title: '创作', icon: '✎' },
-  { id: 'reader', path: '/reader', group: '知识', title: '阅读', icon: '📖' },
-  { id: 'editor', path: '/editor', group: '知识', title: '编辑', icon: '✎' },
+  { id: 'shelf', path: '/shelf', group: '知识', title: '书架', icon: 'shelf' },
+  { id: 'continue', path: '/continue', group: '知识', title: '继续阅读', icon: 'bookmark' },
+  { id: 'compose', path: '/compose', group: '知识', title: '创作', icon: 'pen' },
+  { id: 'reader', path: '/reader', group: '知识', title: '阅读', icon: 'shelf' },
+  { id: 'editor', path: '/editor', group: '知识', title: '编辑', icon: 'pen' },
 
-  { id: 'search', path: '/search', group: '连接', title: '检索', icon: '⌕' },
-  { id: 'tags', path: '/tags', group: '连接', title: '标签', icon: '#' },
-  { id: 'collections', path: '/collections', group: '连接', title: '专题', icon: '❑' },
-  { id: 'graph', path: '/graph', group: '连接', title: '关系', icon: '⁂' },
+  { id: 'search', path: '/search', group: '连接', title: '检索', icon: 'search' },
+  { id: 'tags', path: '/tags', group: '连接', title: '标签', icon: 'tags' },
+  { id: 'collections', path: '/collections', group: '连接', title: '专题', icon: 'collections' },
+  { id: 'graph', path: '/graph', group: '连接', title: '关系', icon: 'graph' },
 
-  { id: 'assistant', path: '/assistant', group: 'AI', title: '助手', icon: '✦' },
-  { id: 'changes', path: '/changes', group: 'AI', title: '变更', icon: '⇄' },
-  { id: 'jobs', path: '/jobs', group: 'AI', title: '作业', icon: '⚙' },
-  { id: 'automation', path: '/automation', group: 'AI', title: '自动化', icon: '∞' },
+  { id: 'assistant', path: '/assistant', group: 'AI', title: '助手', icon: 'assistant' },
+  { id: 'changes', path: '/changes', group: 'AI', title: '变更', icon: 'changes' },
+  { id: 'jobs', path: '/jobs', group: 'AI', title: '作业', icon: 'jobs' },
+  { id: 'automation', path: '/automation', group: 'AI', title: '自动化', icon: 'automation' },
 
-  { id: 'storage', path: '/storage', group: '系统', title: '空间与存储', icon: '▣' },
-  { id: 'account', path: '/account', group: '系统', title: '账号与登录', icon: '◐' },
-  { id: 'agent', path: '/agent', group: '系统', title: 'Agent 接入', icon: '⌸' },
-  { id: 'budget', path: '/budget', group: '系统', title: '权限与预算', icon: '⛨' },
-  { id: 'files', path: '/files', group: '系统', title: '文件', icon: '▤' },
-  { id: 'channels', path: '/channels', group: '系统', title: '通知渠道', icon: '✉' },
-  { id: 'health', path: '/health', group: '系统', title: '健康与恢复', icon: '✚' },
+  { id: 'storage', path: '/storage', group: '系统', title: '空间与存储', icon: 'storage' },
+  { id: 'account', path: '/account', group: '系统', title: '账号与登录', icon: 'account' },
+  { id: 'agent', path: '/agent', group: '系统', title: 'Agent 接入', icon: 'agent' },
+  { id: 'budget', path: '/budget', group: '系统', title: '权限与预算', icon: 'budget' },
+  { id: 'files', path: '/files', group: '系统', title: '文件', icon: 'files' },
+  { id: 'channels', path: '/channels', group: '系统', title: '通知渠道', icon: 'channels' },
+  { id: 'health', path: '/health', group: '系统', title: '健康与恢复', icon: 'health' },
 ];
+
+export const GROUP_HINT: Record<string, string> = {
+  行动: '承诺 · 安排',
+  知识: '读 · 写',
+  连接: '找 · 连',
+  AI: '代理 · 审计',
+  系统: '空间 · 账号',
+};
 
 export const GROUPS = ['行动', '知识', '连接', 'AI', '系统'] as const;
 

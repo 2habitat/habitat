@@ -733,7 +733,8 @@ test('通知渠道：状态可读、能保存配置、测试信按钮跟随配�
   // 检查一次：只算不发，不应该报错
   await page.click('[data-testid="notify-check"]');
   await page.waitForTimeout(1200);
-  await expect(page.locator('.card').last()).toBeVisible();
+  await expect(page.locator('[data-testid="notify-check"]')).toBeVisible();
+  await noCrash(page);
 });
 
 /* ---------------- 22. 管家：简报与代谢 ---------------- */
