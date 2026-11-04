@@ -2253,3 +2253,77 @@ input[type='checkbox']:focus-visible { outline: 2px solid var(--accent); outline
   .cover { padding: 12px 10px 10px 14px; }
   .cover-title { font-size: 15px; -webkit-line-clamp: 4; }
 }
+
+/* ==========================================================================
+   今天页：再把线去掉一轮
+   --------------------------------------------------------------------------
+   这一页原来有：一条贯穿全页的竖装订线、每行任务一条横线、每个分节一条引导线、
+   两栏卡片各一圈边框、分节编号各一个小方框。数下来首屏 20+ 条线、15 个框。
+   全部换成「间距 + 字重 + 悬停底色」。
+   ========================================================================== */
+.day { background-image: none; }
+
+/* 分节：编号变纯文字，不拉引导线，数量靠右对齐 */
+.rubric { gap: 8px; }
+.rubric-no {
+  border: 0; padding: 0; background: none;
+  color: var(--accent); font-weight: 600; letter-spacing: .04em;
+}
+.rubric-rule { display: none; }
+.rubric-meta { margin-left: auto; }
+
+/* 任务行：不画横线，整行悬停；勾选框从方变圆，边框减到 1px */
+.task {
+  border-bottom: 0;
+  padding: 9px 10px;
+  margin: 0 -10px;
+  border-radius: var(--radius);
+}
+.task + .task { margin-top: 1px; }
+.task:hover { background: var(--surface); }
+.task::before { left: 0; top: 10px; bottom: 10px; }
+input[type='checkbox'] {
+  width: 14px; height: 14px; border-width: 1px; border-radius: 50%;
+}
+input[type='checkbox']:hover { border-color: var(--text-2); }
+
+/* 日程条同理 */
+.plan-item { border-bottom: 0; padding: 9px 10px; margin: 0 -10px; border-radius: var(--radius); }
+.plan-item:hover { background: var(--surface); }
+
+/* 右栏两张卡：不再是一张带边框的纸，就是两节内容 */
+.panel {
+  background: transparent; border: 0; border-radius: 0; padding: 0;
+}
+.panel .card-head { border-bottom: 0; padding-bottom: 0; margin-bottom: 10px; }
+.day-rail { gap: var(--sp-7); }
+
+/* 管家清单 & 变更流水：同样的道理，一行一条线的地方全部换成间距 */
+.steward-list { border-top: 0; margin-bottom: 6px; }
+.steward-list > div {
+  border-bottom: 0;
+  padding: 6px 8px; margin: 0 -8px;
+  border-radius: var(--radius);
+  transition: background var(--dur);
+}
+.steward-list > div:hover { background: var(--surface); }
+.steward-idle { border-top: 0; padding: 6px 0 0; }
+.steward-refresh { border-top: 0; padding-top: 6px; }
+.steward-refresh-item { border-bottom: 0; padding: 6px 8px; margin: 0 -8px; border-radius: var(--radius); }
+.steward-refresh-item:hover { background: var(--surface); }
+.steward-brief { border: 0; background: var(--surface-2); }
+
+.chg {
+  padding: 16px 10px;
+  margin: 0 -10px;
+  border-bottom: 0;
+  border-radius: var(--radius);
+  transition: background var(--dur);
+}
+.chg:hover { background: var(--surface); }
+.chg:first-of-type { border-top: 0; }
+/* 一次变更里几十条 op 会糊成一片 ID：只显示两行，细节留给「看差异」 */
+.chg-ops {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-all;
+}
