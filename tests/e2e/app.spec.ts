@@ -30,7 +30,7 @@ const PAGES = [
   ['shelf', '书架'], ['continue', '继续阅读'], ['compose', '创作'],
   ['search', '检索'], ['tags', '标签'], ['collections', '专题'], ['graph', '关系'],
   ['assistant', '助手'], ['changes', '变更'], ['jobs', '作业'], ['automation', '自动化'],
-  ['storage', '空间与存储'], ['agent', 'Agent 接入'], ['budget', '权限与预算'], ['health', '健康与恢复'],
+  ['storage', '空间与存储'], ['account', '账号与登录'], ['agent', 'Agent 接入'], ['budget', '权限与预算'], ['health', '健康与恢复'],
 ];
 
 for (const [id, title] of PAGES) {

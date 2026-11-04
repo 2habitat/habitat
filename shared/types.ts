@@ -103,6 +103,12 @@ export interface Note extends BaseObject {
   body: string;
   status: 'seedling' | 'growing' | 'evergreen';
   srcIds: Id[]; // 上游来源（血缘）
+  /**
+   * frontmatter `source:` 写的是外链 URL 时的原文地址。
+   * 以前这种来源被塞进 srcIds 当 id 找，找不到就静默消失——
+   * 结果是「这条资料的原文在哪」永远答不出来。
+   */
+  sourceUrl?: string;
   /** report = 调研报告（问题→证据→建议），其余是笔记 */
   kind: 'point' | 'summary' | 'outline' | 'question' | 'report';
   tags?: string[];
@@ -129,6 +135,11 @@ export interface Action extends BaseObject {
   flow: 'now' | 'next' | 'later';
   state: 'open' | 'doing' | 'blocked' | 'done';
   projectId?: Id;
+  /**
+   * 资料引用：这条任务要用的材料。写笔记/章节的 stem 或 id，多个用 `|` 分隔，
+   * 落库是 `[refs:: a|b]`。任务本体只有一行文字，材料不写在行里就只能靠人记。
+   */
+  refs?: string[];
   doneAt?: ISO;
 }
 
@@ -267,6 +278,26 @@ export type AnyObject =
   | Job;
 
 export type ObjectType = AnyObject['type'];
+
+/**
+ * 点开一行时看到的东西：本体 + 从哪来 / 挂在哪 / 衍生了什么 + 最近事件。
+ * 所有列表共用这一份，免得每个页面各拼一套「详情」。
+ */
+export interface ObjectLink {
+  id: Id;
+  kind: ObjectType;
+  title: string;
+  /** 关系说明：所属项目 / 来源 / 衍生 / 任务 … */
+  rel: string;
+}
+
+export interface ObjectView {
+  object: AnyObject;
+  /** 相对空间根的文件路径；任务这类没有独立文件的对象为空 */
+  path: string;
+  links: ObjectLink[];
+  events: JournalEvent[];
+}
 
 /* ---------------- 事件 ---------------- */
 

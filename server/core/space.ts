@@ -4,7 +4,7 @@
  */
 import type {
   Action, Annotation, AnyObject, Author, EventRec, Id, JournalEvent, Note,
-  Part, Project, Rep, Work,
+  ObjectLink, ObjectView, Part, Project, Rep, Work,
 } from '../../shared/types.ts';
 import { gatesOf, stageOf, nextAction, type LifeFacts } from '../../shared/lifecycle.ts';
 import { newId, nowISO } from '../../shared/id.ts';
@@ -301,6 +301,147 @@ export class Habitat {
       stage: g.stage,
       next: g.next,
       locked: reps.length > 0 && reps.every((r) => r.locked),
+    };
+  }
+
+  /** 对象叫什么。任务没有 title，正文就是名字 */
+  private nameOf(o: AnyObject): string {
+    const loose = o as unknown as { title?: string; text?: string; slug?: string; path?: string };
+    // 载体没有标题，以前直接落成 `rep-01M653…` 这种 id，读起来等于没有名字。
+    // 载体是文件，用文件名当名字最直白（md / html 一眼分得开）。
+    if (o.type === 'rep') {
+      const p = loose.path ?? '';
+      return p.split('/').pop() || o.id;
+    }
+    return loose.title ?? loose.text ?? loose.slug ?? o.id;
+  }
+
+  /** 某个对象身上发生过什么。事件流按「文件路径」或「id」认领，两者都算 */
+  eventsOf(id: Id, limit = 8): JournalEvent[] {
+    const file = this.store.file(id);
+    return this._recent
+      .filter((e) => e.target === id || (!!file && e.target === file))
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
+      .slice(0, limit);
+  }
+
+  /**
+   * 点开一行时看到的东西：本体 + 从哪来、挂在哪、衍生了什么 + 最近事件。
+   * 列表行只是投影，这里是本体——有它，「今天」里的任务才能回到它服务的章节和项目。
+   */
+  objectView(id: Id): ObjectView | null {
+    const o = this.store.get(id);
+    if (!o) return null;
+    const links: ObjectLink[] = [];
+    const seen = new Set<string>([id]);
+    const counts = new Map<string, number>();
+    /*
+     * 先按类归档，最后按固定顺序拼起来。
+     * 不这样做的话，顺序就是「谁先被扫到」，项目里的资料和相关会交替出现，
+     * 24 条堆在一起根本看不出分组。
+     */
+    const buckets = new Map<string, ObjectLink[]>();
+    const add = (target: AnyObject | undefined, rel: string) => {
+      if (!target || seen.has(target.id)) return;
+      /*
+       * 服务端只做「防呆上限」，真正的截断交给界面：用户点一下就能展开，
+       * 而这里砍掉的他永远看不见。整本书 24 章 + 9 条任务 + 回查，40 够用。
+       */
+      const n = counts.get(rel) ?? 0;
+      if (n >= 40) return;
+      counts.set(rel, n + 1);
+      seen.add(target.id);
+      const link = { id: target.id, kind: target.type, title: this.nameOf(target), rel };
+      buckets.set(rel, [...(buckets.get(rel) ?? []), link]);
+    };
+    // 知识侧对象是「材料」，其余是「关系」——同一个 rel 才能让列表读起来整齐
+    const isMaterial = (t: AnyObject) => t.type === 'note' || t.type === 'work' || t.type === 'part';
+    const relOf = (t: AnyObject) => (isMaterial(t) || t.type === 'rep' ? '资料' : '相关');
+
+    if (o.type === 'action' && o.projectId) add(this.store.get(o.projectId), '所属项目');
+    if (o.type === 'event' && o.projectId) add(this.store.get(o.projectId), '所属项目');
+    if (o.type === 'project' && o.areaId) add(this.store.get(o.areaId), '所属领域');
+    if (o.type === 'part') add(this.store.get((o as Part).workId), '所属作品');
+    if (o.type === 'rep') add(this.store.get((o as Rep).partId), '所属章节');
+    if (o.type === 'note') for (const s of (o as Note).srcIds ?? []) add(this.store.get(s), '来源');
+
+    // 任务自己点名的材料：行里写 [refs:: …]，一个任务通常就一两份
+    if (o.type === 'action') {
+      for (const ref of (o as Action).refs ?? []) {
+        const t = this.store.get(ref) ?? this.store.byStem(ref);
+        if (t) add(t, '资料');
+      }
+    }
+
+    // 正文里的 [[链接]] 与库内路径。链接表早就算好了，只是一直没接到界面上，
+    // 所以「项目挂着的资料」在 Peek 里从来是空的。
+    for (const t of this.store.outbound(id)) {
+      const target = this.store.get(t.id);
+      if (target) add(target, relOf(target));
+    }
+
+    /*
+     * 任务没有自己的材料时，用它所属项目的——「读第 3 章」这类任务，
+     * 材料挂在项目上，不在任务行里。复制到任务上等于让人工去标一遍，
+     * 所以这里只借来看，不写回。
+     */
+    if (o.type === 'action' && o.projectId) {
+      for (const t of this.store.outbound(o.projectId)) {
+        const target = this.store.get(t.id);
+        // 只借材料，不借关系：项目连去另一个项目，对这条任务没有用
+        if (target && isMaterial(target)) add(target, '项目资料');
+      }
+    }
+
+    // 章节的载体：从章节到「能在阅读器里打开的那个文件」还差一跳
+    if (o.type === 'part') {
+      for (const r of this.store.all<Rep>('rep')) if (r.partId === id) add(r, '载体');
+    }
+
+    // 真正「从这条长出去」的笔记
+    for (const d of this.derivedOf(id)) add(d, '衍生');
+
+    // 反查：一个项目 / 章节下面挂了几件没做完的事
+    if (o.type === 'project' || o.type === 'part' || o.type === 'work') {
+      for (const a of this.store.all<Action>('action')) {
+        if (a.projectId === id && a.state !== 'done' && !a.archivedAt) add(a, '任务');
+      }
+    }
+
+    // 最后才是「谁引用了我」：回查用，不该抢在前面
+    for (const b of this.store.backlinks(id)) add(this.store.get(b.id), '被引用');
+
+    /*
+     * 固定展示顺序：身份 → 材料 → 行动 → 零件 → 回查。
+     * 「材料」排在「任务」前面是刻意的：Peek 最常见的困惑就是「这条要看的资料在哪」。
+     */
+    const ORDER = [
+      '所属项目', '所属领域', '所属作品', '所属章节',
+      '资料', '项目资料', '来源',
+      '任务', '载体', '衍生',
+      '相关', '被引用',
+    ];
+    /*
+     * 材料内部再排一次：章节是正文，笔记是二手整理。
+     * 项目同时挂了 24 章正文和 15 篇原文/底稿，按扫描顺序排的话，
+     * 折叠状态下前十行全是整理稿，真正要读的那一章得点开才看得见。
+     */
+    const KIND_RANK: Record<string, number> = { part: 0, work: 1, rep: 2, note: 3 };
+    for (const rel of ORDER) {
+      const arr = buckets.get(rel);
+      if (!arr) continue;
+      if (rel === '资料' || rel === '项目资料') {
+        arr.sort((a, b) => (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9));
+      }
+      links.push(...arr);
+    }
+    for (const [rel, arr] of buckets) if (!ORDER.includes(rel)) links.push(...arr);
+
+    return {
+      object: o,
+      path: this.store.file(id) ?? '',
+      links: links.slice(0, 100),
+      events: this.eventsOf(id, 8),
     };
   }
 

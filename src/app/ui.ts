@@ -1,5 +1,6 @@
 /** 只放 UI 状态，不镜像服务端数据 */
 import { create } from 'zustand';
+import { openPeek as navOpenPeek, closePeek as navClosePeek } from './router.ts';
 
 export type Theme = 'ningzhi' | 'piaoqing' | 'xuanmo';
 export type SheetKind =
@@ -46,6 +47,8 @@ interface UiState {
   setPalette: (v: boolean) => void;
   openSheet: (kind: Exclude<SheetKind, null>, props?: Record<string, unknown>, onDone?: () => void) => void;
   closeSheet: () => void;
+  openPeek: (id: string) => void;
+  closePeek: () => void;
   toast: (text: string, kind?: Toast['kind']) => void;
   dismissToast: (id: number) => void;
 }
@@ -99,6 +102,10 @@ export const useUi = create<UiState>((set, get) => ({
   openSheet: (kind, props = {}, onDone) => set({ sheet: { kind, props, onDone }, paletteOpen: false }),
   closeSheet: () => set({ sheet: null }),
 
+  // Peek 的真相在 URL 里，这里只转发命令，不存副本——两份状态迟早会不一致
+  openPeek: (id) => navOpenPeek(id),
+  closePeek: () => navClosePeek(),
+
   toast: (text, kind = 'info') => {
     const id = toastSeq++;
     set({ toasts: [...get().toasts, { id, text, kind }] });
@@ -110,6 +117,8 @@ export const useUi = create<UiState>((set, get) => ({
 export const toast = (text: string, kind?: Toast['kind']) => useUi.getState().toast(text, kind);
 export const openSheet = useUi.getState().openSheet;
 export const closeSheet = useUi.getState().closeSheet;
+export const openPeek = useUi.getState().openPeek;
+export const closePeek = useUi.getState().closePeek;
 
 /** 把 UI 偏好写到 <html> 上，CSS 变量才会生效 */
 export function applyUiToDocument(): void {

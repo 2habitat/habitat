@@ -4,8 +4,8 @@ import path from 'node:path';
 // 测试空间放仓库内，跟着仓库走，不写死任何人的绝对路径
 const E2E = path.resolve('.e2e-space');
 
-const PORT_API = 8788;
-const PORT_WEB = 5179;
+const PORT_API = Number(process.env.HABITAT_E2E_API_PORT ?? 8788);
+const PORT_WEB = Number(process.env.HABITAT_E2E_WEB_PORT ?? 5179);
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -24,7 +24,14 @@ export default defineConfig({
       // 空间根目录直接作为命令行参数传，不依赖环境变量是否被透传
       command: `npx tsx scripts/seed-e2e.ts && npx tsx server/index.ts ${E2E}`,
       // 邮件配置指到临时文件：测试绝不能碰用户真实的 ~/.habitat/mail.json
-      env: { HABITAT_PORT: String(PORT_API), HABITAT_LOG: 'warn', HABITAT_MAIL_CONFIG: path.join(E2E, '.mail.json') },
+      env: {
+        HABITAT_PORT: String(PORT_API),
+        HABITAT_LOG: 'warn',
+        HABITAT_MAIL_CONFIG: path.join(E2E, '.mail.json'),
+        // E2E 走无登录模式：不读开发机上的真实账号文件，也不会因为「本机有账号」而卡在登录页
+        HABITAT_AUTH: 'off',
+        HABITAT_AUTH_FILE: path.join(E2E, '.auth.json'),
+      },
       port: PORT_API,
       reuseExistingServer: false,
       timeout: 120_000,

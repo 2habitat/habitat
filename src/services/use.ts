@@ -24,6 +24,13 @@ export const qk = {
 };
 
 export function useSpace() { return useQuery({ queryKey: qk.space, queryFn: endpoints.space }); }
+/** 当前登录身份：账号页、改密页与「强制改密」提示都靠它 */
+export function useMe() {
+  return useQuery({ queryKey: ['auth-me'], queryFn: endpoints.me, staleTime: 10_000 });
+}
+export function useAuthUsers(enabled: boolean) {
+  return useQuery({ queryKey: ['auth-users'], queryFn: endpoints.users, enabled, staleTime: 5_000 });
+}
 export function useWorks() { return useQuery({ queryKey: qk.works, queryFn: endpoints.works }); }
 export function useWork(id: string) { return useQuery({ queryKey: qk.work(id), queryFn: () => endpoints.work(id), enabled: !!id }); }
 export function useRep(id: string) { return useQuery({ queryKey: qk.rep(id), queryFn: () => endpoints.rep(id), enabled: !!id }); }
@@ -45,6 +52,14 @@ export function useJobs() { return useQuery({ queryKey: qk.jobs, queryFn: endpoi
 export function useSystem() { return useQuery({ queryKey: qk.system, queryFn: endpoints.system }); }
 export function useManifest() { return useQuery({ queryKey: qk.manifest, queryFn: endpoints.manifest }); }
 export function useObjects(type?: string) { return useQuery({ queryKey: qk.objects(type), queryFn: () => endpoints.objects(type) }); }
+/** Peek 面板的数据源。id 为空时不发请求 */
+export function useObject(id: string | null) {
+  return useQuery({
+    queryKey: ['object', id ?? ''],
+    queryFn: () => endpoints.object(id!),
+    enabled: !!id,
+  });
+}
 
 /** 写完之后统一失效：保证界面看到的就是文件里的内容 */
 export function useRefresh() {

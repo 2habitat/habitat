@@ -78,6 +78,8 @@ export function blockToAction(b: InlineBlock, defaults: Omit<Action, 'text' | 's
     projectId: f.project,
     // 归档标记必须能被读回来，否则「归档」重启后就失效了
     archivedAt: f.archived,
+    // 资料引用：`[refs:: a|b]`。用竖线分隔是因为字段值里不能再出现 `]`
+    refs: f.refs ? f.refs.split('|').map((s) => s.trim()).filter(Boolean) : undefined,
   };
 }
 
@@ -93,6 +95,8 @@ export function renderTask(a: Action, extra: Record<string, string> = {}): strin
   if (a.due) fields.due = a.due;
   if (a.scheduled) fields.at = `${a.scheduled[0]}-${a.scheduled[1]}`;
   if (a.projectId) fields.project = a.projectId;
+  // refs 必须显式写回：patch 改了它而 renderTask 不认识，就会「保存成功、读回来没有」
+  if (a.refs?.length) fields.refs = a.refs.join('|');
   if (a.flow && a.flow !== 'next') fields.flow = a.flow;
   if (a.state !== 'open' && a.state !== 'done') fields.state = a.state;
   if (a.archivedAt) fields.archived = a.archivedAt;

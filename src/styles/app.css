@@ -27,6 +27,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 .sidebar {
   background: var(--bg-sunken); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; overflow: hidden;
+  /* 高于 Peek 遮罩（z 60）：面板开着时仍然能点左侧换页，不用先关面板 */
+  position: relative; z-index: 65;
 }
 .sidebar-head { padding: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2); min-height: var(--topbar-h); }
 .brand { display: flex; align-items: center; gap: var(--sp-2); font-weight: 700; letter-spacing: .04em; }
@@ -189,6 +191,32 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 
 .row { display: flex; align-items: center; gap: var(--sp-2); }
 .row-wrap { flex-wrap: wrap; }
+
+/* 列表行里可点的那段文字：看起来还是文字，但点得开。
+   整行可点会让 checkbox 和行尾按钮误触，所以只把正文做成命中区。 */
+.peekable {
+  display: block; width: 100%; min-width: 0; text-align: left;
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; border-radius: 4px;
+}
+.peekable:hover { color: var(--accent-strong, var(--text)); text-decoration: underline; text-underline-offset: 3px; }
+.peekable:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+.peekable[aria-disabled='true'] { cursor: default; text-decoration: line-through; opacity: .55; }
+
+/* 键盘选中的行：左侧强调条 + accent-soft 底。
+   和侧边栏当前项用同一个 token，键盘走位和导航选中看起来是同一套语言。 */
+[data-nav-row][data-nav-active='1'] {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  border-radius: 4px;
+}
+
+/* 手机上没键盘，留着这行提示只会把动作条挤成两行 */
+@media (max-width: 640px) {
+  .peek-hint { display: none; }
+  /* 抽屉在窄屏要顶满，否则 88vh 会在底下留一条缝，看着像没对齐 */
+  .sheet.sheet-drawer { max-height: 100vh; height: 100vh; border-radius: 0; }
+}
 .col { display: flex; flex-direction: column; gap: var(--sp-2); }
 .spacer { flex: 1; }
 .muted { color: var(--text-3); }

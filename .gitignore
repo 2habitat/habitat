@@ -24,6 +24,7 @@ space/.habitat/state/
 !.env.example
 mail.json
 remote.json
+auth.json
 kb_token*
 
 # 系统垃圾

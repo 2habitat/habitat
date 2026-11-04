@@ -9,7 +9,7 @@ export type RouteId =
   | 'shelf' | 'continue' | 'compose' | 'reader' | 'editor'
   | 'search' | 'tags' | 'collections' | 'graph'
   | 'assistant' | 'changes' | 'jobs' | 'automation'
-  | 'storage' | 'agent' | 'budget' | 'files' | 'channels' | 'health';
+  | 'storage' | 'agent' | 'budget' | 'files' | 'channels' | 'health' | 'account';
 
 export const ROUTES: { id: RouteId; path: string; group: string; title: string; icon: string }[] = [
   { id: 'today', path: '/today', group: '行动', title: '今天', icon: '☀' },
@@ -36,6 +36,7 @@ export const ROUTES: { id: RouteId; path: string; group: string; title: string; 
   { id: 'automation', path: '/automation', group: 'AI', title: '自动化', icon: '∞' },
 
   { id: 'storage', path: '/storage', group: '系统', title: '空间与存储', icon: '▣' },
+  { id: 'account', path: '/account', group: '系统', title: '账号与登录', icon: '◐' },
   { id: 'agent', path: '/agent', group: '系统', title: 'Agent 接入', icon: '⌸' },
   { id: 'budget', path: '/budget', group: '系统', title: '权限与预算', icon: '⛨' },
   { id: 'files', path: '/files', group: '系统', title: '文件', icon: '▤' },
@@ -91,4 +92,20 @@ export function setParam(key: string, value: string | undefined, keep: Record<st
 
 export function routeTitle(id: RouteId): string {
   return ROUTES.find((r) => r.id === id)?.title ?? '';
+}
+
+/* ---------------- 对象 Peek ----------------
+ * Peek 不另开页面，而是挂在当前页的 URL 上（#/today?peek=act-xxx）。
+ * 这样刷新不丢、链接能直接发给别人，也不用给 26 个页面各加一个 onPeek 回调。
+ */
+export function openPeek(id: string): void {
+  setParam('peek', id);
+}
+
+export function closePeek(): void {
+  setParam('peek', undefined);
+}
+
+export function peekTarget(): string | null {
+  return parse().params.peek ?? null;
 }

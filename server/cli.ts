@@ -20,6 +20,7 @@ import { lifeViewOf, lifeSnapshot, renderNext } from './core/lifecycle.ts';
 import { renewPack, renderRenew, markReviewed, reviewOf } from './core/renew.ts';
 import { touch, flush } from './core/usage.ts';
 import { parseScheduled } from './core/inline.ts';
+import { AuthService, defaultAuthFile, defaultPasswordDays, type Role } from './core/auth.ts';
 import type { JournalOp } from '../shared/types.ts';
 import { nowISO } from '../shared/id.ts';
 
@@ -94,6 +95,12 @@ function usage(): string {
   habitat archive <id...>                 归档（不是删除）
   habitat write <id> --body "…" | --file x.md   改正文/改那一行
   habitat list --what tasks|events|inbox|works  列清单
+
+  habitat user list [--json]                    账号列表
+  habitat user add <用户名> [--name 显示名] [--role owner|member] [--password …] [--no-force]
+  habitat user reset <用户名> [--password …] [--no-force]   重置密码（默认下次登录必须改）
+  habitat user disable|enable <用户名>          停用 / 启用账号
+
   habitat mcp                                 起 MCP 服务（stdio，给 Claude Desktop / Cursor 挂）
   habitat propose --ops ops.json [--base base.json] [--reason "…"] [--commit] [--actor agent:xxx]
   habitat sync --from <旧库根> [--map plan.json] [--apply]   补进旧布局新增的文件（不覆盖）
@@ -108,12 +115,132 @@ op 取值：capture ingest read annotate derive edit propose review settle commi
 `;
 }
 
+function fmtTime(v: string | null | undefined): string {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return v;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * 账号管理走 CLI：第一次部署往往还没有网页会话，而且改密码这种事
+ * 不该要求你先能登录。账号文件与网页端是同一份。
+ */
+async function userCommand(sub: string | undefined): Promise<number> {
+  const svc = await AuthService.open({ file: defaultAuthFile(), passwordDays: defaultPasswordDays() });
+  const names = positional(4);
+
+  if (!sub || sub === 'list') {
+    const list = svc.list();
+    if (flag('json')) {
+      console.log(JSON.stringify({ file: svc.file, passwordDays: svc.passwordDays, users: list }, null, 2));
+      return 0;
+    }
+    if (!list.length) {
+      console.log(`还没有账号。\n  habitat user add <用户名> --role owner\n账号文件：${svc.file}`);
+      return 0;
+    }
+    console.log(`账号文件：${svc.file}（密码有效期 ${svc.passwordDays || '不限'} 天）`);
+    for (const u of list) {
+      const flags = [
+        u.role,
+        u.disabled ? '已停用' : '正常',
+        u.mustChangePassword ? '待改密' : '',
+      ].filter(Boolean).join(' · ');
+      console.log(`  ${u.username.padEnd(18)} ${(u.displayName ?? '').padEnd(10)} ${flags}`);
+      console.log(`  ${''.padEnd(18)} 上次登录 ${fmtTime(u.lastLoginAt)} · 密码更新 ${fmtTime(u.passwordUpdatedAt)}`);
+    }
+    return 0;
+  }
+
+  if (sub === 'add') {
+    const username = names[0];
+    if (!username) {
+      console.log('用法：habitat user add <用户名> [--name 显示名] [--role owner|member] [--password …] [--no-force]');
+      return 1;
+    }
+    try {
+      const r = await svc.addUser({
+        username,
+        displayName: arg('name'),
+        role: (arg('role') === 'owner' ? 'owner' : 'member') as Role,
+        password: arg('password'),
+        mustChange: !flag('no-force'),
+        createdBy: 'cli',
+      });
+      console.log(`已创建账号 ${r.user.username}（${r.user.role}）`);
+      if (r.tempPassword) {
+        console.log(`临时密码：${r.tempPassword}`);
+        console.log('这串密码只显示这一次。');
+      }
+      console.log(r.user.mustChangePassword ? '该账号首次登录必须先修改密码。' : '该账号可以直接用设定的密码登录。');
+      console.log(`账号文件：${svc.file}`);
+      console.log('提示：正在运行的服务要重启后才会读到新账号（网页端新建的账号即时生效）。');
+      return 0;
+    } catch (e) {
+      console.error(`[habitat] ${(e as Error).message}`);
+      return 1;
+    }
+  }
+
+  if (sub === 'reset') {
+    const username = names[0];
+    if (!username) {
+      console.log('用法：habitat user reset <用户名> [--password …] [--no-force]');
+      return 1;
+    }
+    try {
+      const r = await svc.resetPassword(username, {
+        password: arg('password'),
+        mustChange: !flag('no-force'),
+        by: 'cli',
+      });
+      console.log(`已重置 ${r.user.username} 的密码，现有会话已失效。`);
+      if (r.tempPassword) {
+        console.log(`临时密码：${r.tempPassword}`);
+        console.log('这串密码只显示这一次。');
+      }
+      if (r.user.mustChangePassword) console.log('该账号下次登录必须先修改密码。');
+      console.log('提示：正在运行的服务要重启后才会读到这次重置。');
+      return 0;
+    } catch (e) {
+      console.error(`[habitat] ${(e as Error).message}`);
+      return 1;
+    }
+  }
+
+  if (sub === 'disable' || sub === 'enable') {
+    const username = names[0];
+    if (!username) {
+      console.log(`用法：habitat user ${sub} <用户名>`);
+      return 1;
+    }
+    try {
+      await svc.updateUser(username, { disabled: sub === 'disable' }, 'cli');
+      console.log(`已${sub === 'disable' ? '停用' : '启用'} ${username}。`);
+      if (sub === 'disable') console.log('该账号的现有会话已全部失效（服务重启后生效）。');
+      console.log('提示：正在运行的服务要重启后才会读到这次变更。');
+      return 0;
+    } catch (e) {
+      console.error(`[habitat] ${(e as Error).message}`);
+      return 1;
+    }
+  }
+
+  console.log(usage());
+  return 1;
+}
+
 async function main(): Promise<number> {
   const [cmd, sub] = process.argv.slice(2);
   if (!cmd || cmd === 'help' || cmd === '--help') {
     console.log(usage());
     return 0;
   }
+  // 账号命令不需要打开空间：部署初期空间可能还没就绪，不能因此连管理员都建不了
+  if (cmd === 'user') return userCommand(sub);
+
   const hab = await Habitat.open(ROOT);
 
   switch (cmd) {

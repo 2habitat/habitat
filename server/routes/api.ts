@@ -117,8 +117,19 @@ function asBuffer(body: unknown): Buffer | null {
     return { objects: list.slice(0, lim), total: list.length };
   });
 
-  app.get('/api/works', async () => ({ works: hab.works() }));
+  /**
+   * 单个对象的完整视图。列表里的每一行点开都走这里——
+   * 它必须能回答「我在哪、我属于谁、最近谁动过我」，否则点开也只是换个地方看标题。
+   */
+  app.get('/api/object/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await hab.loadRecent();
+    const v = hab.objectView(id);
+    if (!v) return reply.code(404).send({ error: `对象不存在：${id}` });
+    return v;
+  });
 
+  app.get('/api/works', async () => ({ works: hab.works() }));
   app.get('/api/works/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     const v = hab.workView(id);

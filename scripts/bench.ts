@@ -108,7 +108,7 @@ await median('读正文', 20, () => hab.store.body(first.id));
 
 if (WITH_HTTP) {
   const { buildServer } = await import('../server/index.ts');
-  const app = await buildServer({ root: dir });
+  const app = await buildServer({ root: dir, authMode: 'off' });
   const hit = async (url: string) => {
     const r = await app.inject({ method: 'GET', url });
     if (r.statusCode !== 200) throw new Error(`${url} → ${r.statusCode} ${r.body.slice(0, 120)}`);

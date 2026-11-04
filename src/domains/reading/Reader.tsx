@@ -13,21 +13,22 @@ import { navigate, setParam } from '../../app/router.ts';
 
 const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
 
-export function ReaderPage({ workId, repId }: { workId?: string; repId?: string }) {
+export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?: string; partId?: string }) {
   const { data: work } = useWork(workId ?? '');
   const refresh = useRefresh();
   const openSheet = useUi((s) => s.openSheet);
   const openAi = useUi((s) => s.openAi);
   const toast = useUi((s) => s.toast);
 
-  // 没给 rep 就取作品第一个 md 载体
+  // 没给 rep 就取这一章的 md 载体；没给 part 就从作品第一章开始
   const fallbackRep = useMemo(() => {
     if (repId) return repId;
     if (!work) return '';
-    const first = [...(work.parts ?? [])].sort((a, b) => a.part.order - b.part.order)[0];
+    const parts = [...(work.parts ?? [])].sort((a, b) => a.part.order - b.part.order);
+    const first = (partId ? parts.find((p) => p.part.id === partId) : undefined) ?? parts[0];
     const r = first?.reps?.find((x) => x.carrier === 'md') ?? first?.reps?.[0];
     return r?.id ?? '';
-  }, [repId, work]);
+  }, [repId, work, partId]);
 
   const currentRep = repId || fallbackRep;
   const { data: repData, isLoading, error } = useRep(currentRep);

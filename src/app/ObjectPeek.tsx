@@ -1,0 +1,317 @@
+/**
+ * 对象 Peek：列表里的每一行点一下看这里。
+ * 不换页是刻意的——判断「这条要不要现在做」的时候，上下文一丢就得重来。
+ * Esc 收起，点关联条目在原地换一个对象，不叠罗汉。
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { useUi } from './ui.ts';
+import { useObject, useRefresh } from '../services/use.ts';
+import { endpoints, type ObjectLinkView } from '../services/api.ts';
+import { navigate, openPeek, closePeek, useLocation } from './router.ts';
+import { Spinner, ErrorBox } from '../components/ui.tsx';
+
+const KIND_LABEL: Record<string, string> = {
+  action: '任务', event: '日程', note: '笔记', part: '章节',
+  work: '作品', project: '项目', area: '领域', rep: '载体', annotation: '批注',
+};
+
+const STATE_LABEL: Record<string, string> = {
+  open: '待办', doing: '进行中', blocked: '卡住', done: '已完成',
+  active: '进行中', someday: '以后', dropped: '已放弃',
+  seedling: '碎片', growing: '生长中', evergreen: '定稿',
+};
+
+const FLOW_LABEL: Record<string, string> = { now: '现在做', next: '接着做', later: '以后做' };
+
+const ACTOR_LABEL = (a: string) =>
+  a === 'human' ? '你' : a.startsWith('agent:') ? a.slice(6) : a === 'system' ? '系统' : '外部';
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <>
+      <span className="small muted">{label}</span>
+      <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{children}</span>
+    </>
+  );
+}
+
+export function ObjectPeek() {
+  const loc = useLocation();
+  const peekId = loc.params.peek ?? null;
+  const toast = useUi((s) => s.toast);
+  const refresh = useRefresh();
+  const { data, isLoading, error } = useObject(peekId);
+  const [busy, setBusy] = useState(false);
+  // 每类默认只露 10 条，点一下展开。整本书 24 章全铺开，任务就被挤到看不见的地方了
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const groups = useMemo(() => {
+    const out: { rel: string; items: ObjectLinkView[] }[] = [];
+    for (const l of data?.links ?? []) {
+      const last = out[out.length - 1];
+      if (last && last.rel === l.rel) last.items.push(l);
+      else out.push({ rel: l.rel, items: [l] });
+    }
+    return out;
+  }, [data?.links]);
+
+  useEffect(() => {
+    if (!peekId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      closePeek();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [peekId, closePeek]);
+
+  if (!peekId) return null;
+
+  const o = data?.object;
+  const isTask = o?.type === 'action';
+  const done = o?.state === 'done';
+
+  async function patch(p: Record<string, unknown>, reason: string) {
+    if (!peekId) return;
+    setBusy(true);
+    try {
+      const { changeset } = await endpoints.propose([{ t: 'update', id: peekId, patch: p }], reason);
+      const r = await endpoints.commit(changeset.id);
+      if (!r.ok) throw new Error('刚被别处改过，刷新后再试');
+      toast('已保存', 'ok');
+      refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openFull() {
+    if (!o) return;
+    // 章节和载体要落到阅读器的那一章，不能停在书架上——「打开全文」的意义就是少走两步
+    if (o.type === 'note') navigate('editor', { id: o.id });
+    else if (o.type === 'part') {
+      const wid = (o as { workId?: string }).workId;
+      // 带上 part：同一部书 24 章，不带章节就只能落到第一章，点了等于没点
+      if (wid) navigate('reader', { work: wid, part: o.id });
+      else navigate('shelf');
+    }
+    else if (o.type === 'rep') navigate('reader', { rep: o.id });
+    else if (o.type === 'work') navigate('reader', { work: o.id });
+    else if (o.type === 'project') navigate('projects');
+    else if (o.type === 'event') navigate('calendar');
+    closePeek();
+  }
+
+  const title = o?.text ?? o?.title ?? o?.slug ?? '';
+
+  return (
+    <div
+      className="overlay overlay-right"
+      onClick={closePeek}
+      data-testid="object-peek"
+      // 高于移动端底栏（250）与抽屉（290）：面板不能在手机上被导航条压住
+      style={{ background: 'rgba(0,0,0,0.18)', zIndex: 300 }}
+    >
+      <div
+        className="sheet sheet-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title || '对象详情'}
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 'min(520px, 92vw)' }}
+      >
+        <div className="sheet-head">
+          <span
+            className="small"
+            style={{
+              padding: '2px 7px', borderRadius: 4, flex: '0 0 auto',
+              background: 'var(--accent-weak, var(--bg-2))', color: 'var(--accent-strong, var(--text))',
+            }}
+          >
+            {KIND_LABEL[o?.type ?? ''] ?? o?.type ?? ''}
+          </span>
+          <strong style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', fontSize: 'var(--fs-4, 15px)' }}>
+            {title || (isLoading ? '读取中…' : '对象')}
+          </strong>
+          <button className="btn btn-sm btn-ghost" onClick={closePeek} aria-label="关闭" data-testid="peek-close">✕</button>
+        </div>
+
+        <div className="sheet-body">
+          {isLoading && <Spinner />}
+          {error && <ErrorBox error={error as Error} />}
+
+          {o && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr 64px 1fr', gap: '10px 12px', alignItems: 'baseline' }}>
+                {o.due !== undefined && <Field label="到期">{o.due || '没定'}</Field>}
+                {o.scheduled && <Field label="安排">{o.scheduled[0]}–{o.scheduled[1]}</Field>}
+                {o.start && <Field label="时间">{o.start.slice(11, 16)}–{(o.end ?? o.start).slice(11, 16)}</Field>}
+                {o.state && <Field label="状态">{STATE_LABEL[o.state] ?? o.state}</Field>}
+                {o.flow && <Field label="推进">{FLOW_LABEL[o.flow] ?? o.flow}</Field>}
+                {o.status && <Field label="成熟度">{STATE_LABEL[o.status] ?? o.status}</Field>}
+                {data?.path && (
+                  <Field label="位置">
+                    <span className="mono small">{data.path}</span>
+                  </Field>
+                )}
+                {o.sourceUrl && (
+                  <Field label="原文">
+                    <a
+                      href={o.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="small"
+                      data-testid="peek-source"
+                    >
+                      打开原始链接 ↗
+                    </a>
+                  </Field>
+                )}
+              </div>
+
+              {o.summary && (
+                <p className="small" style={{ margin: '14px 0 0', color: 'var(--text-2)' }}>{o.summary}</p>
+              )}
+
+              {!!data?.links.length && (
+                <div style={{ marginTop: 18 }}>
+                  <div className="small muted" style={{ marginBottom: 4 }}>
+                    资料与关联
+                    <span style={{ marginLeft: 6, opacity: .75 }}>{data.links.length}</span>
+                  </div>
+                  {/*
+                    按类分组：24 条资料如果每条都重复一个「资料」标签，等于把列宽喂给了噪音。
+                    组头写一次就够了，条目只留标题和类型。
+                  */}
+                  {groups.map((g) => {
+                    const open = expanded[g.rel] ?? g.items.length <= 10;
+                    const shown = open ? g.items : g.items.slice(0, 10);
+                    const isMaterial = g.rel === '资料' || g.rel === '项目资料';
+                    return (
+                      <div key={g.rel}>
+                        <div
+                          className="small muted"
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '10px 0 2px' }}
+                        >
+                          <span style={{ color: isMaterial ? 'var(--accent-strong, var(--text-2))' : undefined }}>{g.rel}</span>
+                          <span style={{ opacity: .6 }}>{g.items.length}</span>
+                          {g.items.length > 10 && (
+                            <button
+                              className="btn btn-sm btn-ghost"
+                              style={{ marginLeft: 'auto', padding: '0 6px', height: 22 }}
+                              onClick={() => setExpanded((s) => ({ ...s, [g.rel]: !open }))}
+                              data-testid="peek-expand"
+                            >
+                              {open ? '收起' : `展开 ${g.items.length - 10} 条`}
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {shown.map((l) => (
+                            <button
+                              key={`${l.rel}-${l.id}`}
+                              className="btn btn-ghost"
+                              style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '5px 8px', height: 'auto' }}
+                              onClick={() => openPeek(l.id)}
+                              title={`${l.rel} · ${l.kind}`}
+                              data-testid="peek-link"
+                              data-rel={l.rel}
+                            >
+                              <span className="ellipsis" style={{ flex: 1 }}>{l.title}</span>
+                              <span className="small muted" style={{ flex: '0 0 auto', opacity: .7 }}>{KIND_LABEL[l.kind] ?? ''}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div style={{ marginTop: 18 }}>
+                <div className="small muted" style={{ marginBottom: 8 }}>
+                  {isTask ? '任务池最近变动' : '最近变动'}
+                </div>
+                {isTask && (
+                  <div className="small muted" style={{ marginBottom: 8, opacity: .8 }}>
+                    任务都存在同一个文件里，这里显示的是该文件的改动，不一定是这一条。
+                  </div>
+                )}
+                {data?.events.length ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 176, overflowY: 'auto' }}>
+                    {data.events.map((e) => (
+                      <div key={e.id} className="small" style={{ color: 'var(--text-2)', display: 'flex', gap: 8 }}>
+                        <span className="mono" style={{ flex: '0 0 auto' }}>{e.at.slice(5, 16).replace('T', ' ')}</span>
+                        <span style={{ flex: '0 0 auto' }}>{ACTOR_LABEL(e.actor)}</span>
+                        <span className="ellipsis">{e.summary || e.op}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="small muted">还没有留下变动记录。</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="sheet-foot" style={{ justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+          <span className="small muted peek-hint" style={{ marginRight: 4, alignSelf: 'center' }}>
+            J/K 换一条 · Space 收起 · Esc 关闭
+          </span>
+          {isTask && (
+            <>
+              <button
+                className="btn btn-sm"
+                disabled={busy}
+                onClick={() => void patch({ state: done ? 'open' : 'done' }, done ? '重新打开任务' : '完成任务')}
+                data-testid="peek-toggle-done"
+              >
+                {done ? '重新打开' : '完成'}
+              </button>
+              <button
+                className="btn btn-sm"
+                disabled={busy || o?.due === today()}
+                onClick={() => void patch({ due: today() }, '改到今天')}
+                data-testid="peek-today"
+              >
+                改到今天
+              </button>
+              <button
+                className="btn btn-sm"
+                disabled={busy || !o?.due}
+                onClick={() => {
+                  const d = new Date(o!.due!);
+                  d.setDate(d.getDate() + 1);
+                  void patch({ due: d.toISOString().slice(0, 10) }, '顺延一天');
+                }}
+              >
+                顺延一天
+              </button>
+            </>
+          )}
+          <span style={{ flex: 1 }} />
+          <button
+            className="btn btn-sm"
+            disabled={busy || !o}
+            onClick={() => void patch({ archivedAt: new Date().toISOString() }, '归档')}
+            title="归档不是删除，文件还在"
+          >
+            归档
+          </button>
+          {o && o.type !== 'action' && (
+            <button className="btn btn-sm btn-primary" onClick={openFull}>
+              打开全文
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

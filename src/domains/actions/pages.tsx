@@ -18,6 +18,7 @@ const FLOW_LABEL: Record<string, string> = { now: '现在做', next: '接着做'
 function ActionRow({ a, onDone }: { a: ActionView; onDone: () => void }) {
   const refresh = useRefresh();
   const toast = useUi((s) => s.toast);
+  const openPeek = useUi((s) => s.openPeek);
   const [busy, setBusy] = useState(false);
   const overdue = a.due && a.due < todayStr() && a.state !== 'done';
 
@@ -38,18 +39,26 @@ function ActionRow({ a, onDone }: { a: ActionView; onDone: () => void }) {
   }
 
   return (
-    <div className="row" style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+    <div className="row" data-nav-row={a.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
       <input
         type="checkbox"
         checked={a.state === 'done'}
         disabled={busy}
         aria-label={`完成：${a.text}`}
         data-testid="action-toggle"
+        data-done-btn
         onChange={() => void next()}
       />
-      <span style={{ flex: 1, textDecoration: a.state === 'done' ? 'line-through' : undefined }} className="ellipsis">
+      <button
+        type="button"
+        className="peekable ellipsis"
+        style={{ textDecoration: a.state === 'done' ? 'line-through' : undefined }}
+        onClick={() => openPeek(a.id)}
+        title="看详情"
+        data-testid="action-open"
+      >
         {a.text}
-      </span>
+      </button>
       {a.due && <Chip tone={overdue ? 'danger' : ''}>{a.due}{overdue ? ' 已过期' : ''}</Chip>}
       <Chip>{FLOW_LABEL[a.flow] ?? a.flow}</Chip>
       {a.state === 'blocked' && <Chip tone="warn">卡住</Chip>}
@@ -63,6 +72,7 @@ export function TodayPage() {
   const toast = useUi((s) => s.toast);
   const openSheet = useUi((s) => s.openSheet);
   const openAi = useUi((s) => s.openAi);
+  const openPeek = useUi((s) => s.openPeek);
   const refresh = useRefresh();
 
   /** 不想等到那天就先挪到今天；本质是改 due，不是新建 */
@@ -125,10 +135,18 @@ export function TodayPage() {
       {data.overdue.length > 0 && (
         <Card title="过期了" desc="要么改日期，要么删掉——挂着只会让人麻木">
           {data.overdue.map((a) => (
-            <div key={a.id} className="row" style={{ padding: '6px 0' }}>
+            <div key={a.id} className="row" data-nav-row={a.id} style={{ padding: '6px 0' }}>
               <Chip tone="danger">{a.due}</Chip>
-              <span className="ellipsis" style={{ flex: 1 }}>{a.text}</span>
-              <button className="btn btn-sm" onClick={() => openSheet('task', { text: a.text, due: todayStr() })}>改到今天</button>
+              <button
+                type="button"
+                className="peekable ellipsis"
+                onClick={() => openPeek(a.id)}
+                title="看详情"
+                data-testid="overdue-open"
+              >
+                {a.text}
+              </button>
+              <button className="btn btn-sm" onClick={() => void moveToToday(a)} data-testid="overdue-today">改到今天</button>
             </div>
           ))}
         </Card>
@@ -138,10 +156,18 @@ export function TodayPage() {
         {plan.length === 0
           ? <div className="small muted">今天没有日程，也没有排期的任务。</div>
           : plan.map((p) => (
-            <div key={p.id} className="row" style={{ padding: '6px 0' }}>
+            <div key={p.id} className="row" data-nav-row={p.id} style={{ padding: '6px 0' }}>
               <span className="mono">{p.start}–{p.end}</span>
               {p.task && <Chip tone="accent">任务</Chip>}
-              <span className="ellipsis" style={{ flex: 1 }} title={p.title}>{p.title}</span>
+              <button
+                type="button"
+                className="peekable ellipsis"
+                onClick={() => openPeek(p.id)}
+                title="看详情"
+                data-testid="plan-open"
+              >
+                {p.title}
+              </button>
             </div>
           ))}
       </Card>
@@ -157,9 +183,18 @@ export function TodayPage() {
         const later = future.filter((a) => a.due! > soon);
         if (!future.length && !undated.length) return null;
         const Row = ({ a }: { a: ActivityAction }) => (
-          <div className="row row-wrap" style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }} data-testid="upcoming-row">
-            <span className="small muted mono" style={{ width: 84 }}>{a.due ?? '无日期'}</span>
-            <span style={{ flex: 1, minWidth: 0 }}>{a.text}</span>
+          <div className="row row-wrap" data-nav-row={a.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }} data-testid="upcoming-row">
+            <span className="small muted mono" style={{ width: 84, flex: '0 0 auto' }}>{a.due ?? '无日期'}</span>
+            <button
+              type="button"
+              className="peekable"
+              style={{ flex: 1 }}
+              onClick={() => openPeek(a.id)}
+              title="看详情"
+              data-testid="upcoming-open"
+            >
+              {a.text}
+            </button>
             {a.projectId ? <Chip tone="info">项目任务</Chip> : null}
             <button className="btn btn-sm" onClick={() => void moveToToday(a)} data-testid="upcoming-today">改到今天</button>
           </div>
@@ -258,6 +293,7 @@ export function CalendarPage() {
   const [month, setMonth] = useState(todayStr().slice(0, 7));
   const refresh = useRefresh();
   const openSheet = useUi((s) => s.openSheet);
+  const openPeek = useUi((s) => s.openPeek);
   const { data } = useObjects('event');
   const { data: actData } = useObjects('action');
   const [y, m] = month.split('-').map(Number);
@@ -318,15 +354,31 @@ export function CalendarPage() {
               >
                 <div className="small muted">{d ?? ''}</div>
                 {items.blocks.map((b) => (
-                  <div key={b.id} className="small ellipsis" style={{ marginTop: 2 }} title={b.title} data-testid="cal-block">
+                  <button
+                    key={b.id}
+                    type="button"
+                    className="peekable small ellipsis"
+                    style={{ marginTop: 2 }}
+                    title={b.title}
+                    data-testid="cal-block"
+                    onClick={(e) => { e.stopPropagation(); openPeek(b.id); }}
+                  >
                     <Chip tone={b.kind === 'event' ? 'info' : 'accent'}>{b.allDay ? '全天' : b.start}</Chip> {b.title}
-                  </div>
+                  </button>
                 ))}
                 {items.due.map((t) => (
-                  <div key={t.id} className="small ellipsis" style={{ marginTop: 2, color: 'var(--text-2)' }} title={t.title} data-testid="cal-due">
+                  <button
+                    key={t.id}
+                    type="button"
+                    className="peekable small ellipsis"
+                    style={{ marginTop: 2, color: 'var(--text-2)' }}
+                    title={t.title}
+                    data-testid="cal-due"
+                    onClick={(e) => { e.stopPropagation(); openPeek(t.id); }}
+                  >
                     <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 9, background: 'var(--text-3)', marginRight: 5, verticalAlign: 'middle' }} />
                     {t.title}
-                  </div>
+                  </button>
                 ))}
               </div>
             );
@@ -352,6 +404,7 @@ function shift(month: string, n: number): string {
 export function ProjectsPage() {
   const { data, isLoading } = useProjects();
   const openSheet = useUi((s) => s.openSheet);
+  const openPeek = useUi((s) => s.openPeek);
   if (isLoading) return <Spinner />;
 
   return (
@@ -366,7 +419,16 @@ export function ProjectsPage() {
           : data.projects.map((p) => (
             <div key={p.id} className="card" style={{ marginBottom: 8 }}>
               <div className="row">
-                <strong>{p.title}</strong>
+                <button
+                  type="button"
+                  className="peekable"
+                  style={{ width: 'auto', flex: '0 1 auto', fontWeight: 600 }}
+                  onClick={() => openPeek(p.id)}
+                  title="看项目详情"
+                  data-testid="project-open"
+                >
+                  {p.title}
+                </button>
                 <Chip tone={p.state === 'active' ? 'ok' : ''}>{p.state}</Chip>
                 <span className="spacer" />
                 <span className="small muted">
@@ -379,9 +441,17 @@ export function ProjectsPage() {
                 <div style={{ marginTop: 8 }}>
                   <Bar value={p.actions.length ? p.done / p.actions.length : 0} />
                   {p.actions.slice(0, 6).map((a) => (
-                    <div key={a.id} className="row small" style={{ padding: '3px 0' }}>
+                    <div key={a.id} className="row small" data-nav-row={a.id} style={{ padding: '3px 0' }}>
                       <span>{a.state === 'done' ? '✓' : '·'}</span>
-                      <span className="ellipsis" style={{ flex: 1 }}>{a.text}</span>
+                      <button
+                        type="button"
+                        className="peekable ellipsis"
+                        onClick={() => openPeek(a.id)}
+                        title="看详情"
+                        data-testid="project-task-open"
+                      >
+                        {a.text}
+                      </button>
                       {a.due && <span className="muted">{a.due}</span>}
                     </div>
                   ))}

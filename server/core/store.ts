@@ -81,6 +81,7 @@ type FragOp =
   | { k: 'put'; obj: AnyObject; rel: string; inlineId?: string }
   | { k: 'stem'; stem: string; id: Id }
   | { k: 'link'; from: Id; to: string }
+  | { k: 'res'; from: Id; to: string }
   | { k: 'asset'; entry: AssetEntry }
   | { k: 'inline'; rel: string; data: InlineFile }
   | { k: 'src'; id: Id; v: string }
@@ -99,6 +100,15 @@ export class Store {
   cursors = new Map<string, CursorRec>();
   stems = new Map<string, Id>();
   links: { from: Id; to: string; resolved: Id | null }[] = [];
+  /**
+   * 正文里用反引号写的库内路径（`knowledge/works/x/parts/`）。
+   *
+   * 人写路径比写 [[链接]] 顺手得多——项目文件里「阅读材料」那一段就是路径。
+   * 但这些路径以前只是文本，界面上点不动，所以「资料在哪」答不出来。
+   * 路径在扫描结束、所有对象都建好之后才能解析（目录要反查下面挂了什么），
+   * 所以这里先存原文，resolveLinks 时统一填 resolved。
+   */
+  resourceRefs: { from: Id; to: string; resolved: Id[] }[] = [];
   /**
    * 文件内容缓存，键是相对路径，值是 (mtime,size) 签名。
    *
@@ -301,6 +311,7 @@ export class Store {
     this.assets = [];
     this.stems.clear();
     this.links = [];
+    this.resourceRefs = [];
 
     const entries = await this.adapter.list();
     // 签名表：内容是文件的 (mtime,size)，用来判断「这文件上次读过之后变没变」
@@ -438,6 +449,8 @@ export class Store {
     await this.scanAnnotations();
     // 7. wikilink 解析
     this.resolveLinks();
+    // 8. 路径引用解析：必须在 4/5 之后，目录要反查已经建好的章节
+    this.resolveResources();
     await this.flushIds();
 
     // 片段表换代：本次没出现过的文件（已删/已改名）自然被丢掉
@@ -524,6 +537,7 @@ export class Store {
         case 'put': this.put(op.obj, op.rel, op.inlineId); break;
         case 'stem': this.addStem(op.stem, op.id); break;
         case 'link': this.links.push({ from: op.from, to: op.to, resolved: null }); break;
+        case 'res': this.resourceRefs.push({ from: op.from, to: op.to, resolved: [] }); break;
         case 'asset': this.assets.push(op.entry); break;
         case 'inline': this.inlineFiles.set(op.rel, op.data); break;
         case 'src': this.sourceOf.set(op.id, op.v); break;
@@ -556,6 +570,11 @@ export class Store {
       this.statusOf.set(id, fm.status);
     }
     if (typeof fm.locked === 'boolean') this.lockedNote.set(id, fm.locked);
+    // related 是 frontmatter 里的关系，写在正文之外，以前根本没进链接表——
+    // 于是「项目在 frontmatter 里挂了三份材料」，界面上一条都看不到。
+    const related = fm.related;
+    if (Array.isArray(related)) this.collectLinks(id, related.map(String).join('\n'));
+    else if (typeof related === 'string') this.collectLinks(id, related);
   }
 
   /**
@@ -719,6 +738,8 @@ export class Store {
       body,
       status: (fm.status as Note['status']) ?? 'seedling',
       srcIds,
+      // 外链形态的 source 进不了 id 图（它本来就不是对象），但它是「原文在哪」的答案
+      sourceUrl: typeof fm.source === 'string' && /^https?:\/\//i.test(fm.source.trim()) ? fm.source.trim() : undefined,
       kind: (fm.kind as Note['kind']) ?? (isReport ? 'report' : 'point'),
       tags: Array.isArray(fm.tags) ? (fm.tags as string[]).map(String) : undefined,
     };
@@ -745,7 +766,83 @@ export class Store {
       this.links.push({ from: id, to: m[1].trim(), resolved: null });
       found.push(m[1].trim());
     }
-    if (found.length) this.wikilinkTargets.set(id, found);
+    if (found.length) this.wikilinkTargets.set(id, [...(this.wikilinkTargets.get(id) ?? []), ...found]);
+    this.collectResources(id, body);
+  }
+
+  /**
+   * 反引号里的库内路径也是资料引用。
+   *
+   * 只认「库根目录开头 + 以 / 结尾或是带扩展名的文件」这两种形状：
+   * 文档里同样用反引号包着命令、字段名、语法示例，靠猜会把一整段噪音变成断链。
+   */
+  private collectResources(id: Id, body: string): void {
+    // 围栏里的代码是示例（契约文档里全是要人照抄的命令），不构成引用；
+    // 行内代码必须保留——路径就是这么写的。
+    const text = body.replace(/^[ \t]{0,3}(```+|~~~+)[^\n]*\n[\s\S]*?^[ \t]{0,3}\1[^\n]*$/gm, '');
+    const ROOTS = ['knowledge/', 'work/', 'assets/', 'archive/', 'inbox/', 'space/'];
+    const re = /`([^`\n]{2,200})`/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const p = m[1].trim().replace(/^\.?\//, '');
+      if (!ROOTS.some((r) => p.startsWith(r))) continue;
+      if (!p.endsWith('/') && !/\.[a-z0-9]{1,5}$/i.test(p)) continue;
+      /*
+       * 契约文档里的路径是「形状」不是「指向」：`knowledge/works/<slug>/parts/`、
+       * `work/events/YYYY-MM.md`、`work/events/*.md`。
+       * 不过滤的话，改一次 AGENTS.md 就往链接表里灌二十条永远解析不了的引用。
+       */
+      if (/[<>*]|YYYY|MM-DD/.test(p)) continue;
+      this.rec?.push({ k: 'res', from: id, to: p });
+      this.resourceRefs.push({ from: id, to: p, resolved: [] });
+    }
+  }
+
+  /**
+   * 路径引用的解析。目录形态按前缀反查「挂在下面、且是能读的东西」，
+   * 文件形态按 rel 精确匹配。解析不到的直接空着——路径写错不该让整页报错。
+   */
+  private resolveResources(): void {
+    // 只有知识侧对象才算「一份材料」。路径也可能指向 tasks.md 这种行内文件，
+    // 那里面是 100 条任务，不是资料——不解出来才不会被当成关联倒进 Peek。
+    const READABLE = new Set(['note', 'part', 'work']);
+    const keep = (id: Id) => READABLE.has(this.objects.get(id)?.type ?? '');
+    for (const r of this.resourceRefs) {
+      if (r.to.endsWith('/')) {
+        const hits: Id[] = [];
+        for (const [id, rel] of this.fileOf) {
+          if (!rel.startsWith(r.to) || !keep(id)) continue;
+          hits.push(id);
+        }
+        hits.sort((a, b) => (this.fileOf.get(a) ?? '').localeCompare(this.fileOf.get(b) ?? ''));
+        r.resolved = hits.slice(0, 24);
+      } else {
+        r.resolved = (this.idsIn.get(r.to) ?? []).filter(keep).slice(0, 4);
+      }
+    }
+  }
+
+  /** 出链：这条对象引用了谁（`[[链接]]` 与库内路径都算） */
+  outbound(id: Id): { id: Id; via: 'link' | 'path' }[] {
+    const out: { id: Id; via: 'link' | 'path' }[] = [];
+    for (const l of this.links) if (l.from === id && l.resolved) out.push({ id: l.resolved, via: 'link' });
+    for (const r of this.resourceRefs) if (r.from === id) for (const t of r.resolved) out.push({ id: t, via: 'path' });
+    return out;
+  }
+
+  /** 入链：谁引用了它。断链只在 unresolvedTargets 里出现，这里只给能点的 */
+  backlinks(id: Id): { id: Id; via: 'link' | 'path' }[] {
+    const out: { id: Id; via: 'link' | 'path' }[] = [];
+    for (const l of this.links) if (l.resolved === id && l.from !== id) out.push({ id: l.from, via: 'link' });
+    for (const r of this.resourceRefs) if (r.from !== id && r.resolved.includes(id)) out.push({ id: r.from, via: 'path' });
+    return out;
+  }
+
+  /** 按 stem / 标题找对象：链接和 `[refs::]` 都按名字写，不按 id 写 */
+  byStem(s: string): AnyObject | undefined {
+    const k = s.trim().toLowerCase();
+    if (!k) return undefined;
+    return this.objects.get(this.stems.get(k) ?? '');
   }
 
   private resolveLinks(): void {

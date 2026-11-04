@@ -3,7 +3,14 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    public detail?: { conflict?: ConflictPayload; blocked?: BlockedCheck[] },
+    public detail?: {
+      conflict?: ConflictPayload;
+      blocked?: BlockedCheck[];
+      code?: string;
+      problems?: string[];
+      change?: PasswordChangeState;
+    },
+    public code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -60,11 +67,26 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     data = text;
   }
   if (!res.ok) {
-    const d = (data ?? {}) as { error?: string; conflict?: ConflictPayload; blocked?: BlockedCheck[] };
+    const d = (data ?? {}) as {
+      error?: string; code?: string; conflict?: ConflictPayload;
+      blocked?: BlockedCheck[]; problems?: string[]; change?: PasswordChangeState;
+    };
+    // 会话没了就回登录页；强制改密就回改密页。这两种不是「页面上报个错」能解决的
+    if (typeof window !== 'undefined') {
+      if (res.status === 401 && !window.location.pathname.startsWith('/login')) {
+        const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
+        window.location.assign(`/login?next=${next}`);
+      } else if (res.status === 403 && d.code === 'password_change_required') {
+        window.location.assign('/change-password');
+      }
+    }
     throw new ApiError(res.status, d.error ?? `请求失败（${res.status}）`, {
       conflict: d.conflict,
       blocked: d.blocked,
-    });
+      code: d.code,
+      problems: d.problems,
+      change: d.change,
+    }, d.code);
   }
   if (method !== 'GET') invalidateAll();
   return data as T;
@@ -73,6 +95,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   get: <T>(p: string) => request<T>('GET', p),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
+  patch: <T>(p: string, b?: unknown) => request<T>('PATCH', p, b),
   /** 裸 body 上传：文件不走 JSON，别把它 base64 化 */
   put: async <T>(p: string, body: BodyInit, type = 'application/octet-stream'): Promise<T> => {
     const res = await fetch(p, { method: 'PUT', headers: { 'content-type': type }, body });
@@ -103,8 +126,58 @@ export interface SpaceInfo {
   };
 }
 
+export interface PasswordChangeState {
+  required: boolean;
+  reason: 'initial' | 'admin' | 'expired' | null;
+  message: string;
+  changedAt: string | null;
+  expiresAt: string | null;
+  daysUsed: number | null;
+  daysLeft: number | null;
+}
+
+export interface AccountUser {
+  username: string;
+  displayName?: string;
+  role: 'owner' | 'member';
+  disabled: boolean;
+  mustChangePassword: boolean;
+  passwordUpdatedAt: string | null;
+  passwordExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+  lastLoginIp: string | null;
+  change: PasswordChangeState;
+}
+
+export interface AuthMe {
+  ok: boolean;
+  user: AccountUser | null;
+  auth: { mode: 'password' | 'token' | 'none' | 'unknown'; password: boolean; token: boolean };
+  change: PasswordChangeState | null;
+  canManageUsers: boolean;
+}
+
 export const endpoints = {
   space: () => api.get<SpaceInfo>('/api/space'),
+
+  /* 账号与登录 */
+  me: () => api.get<AuthMe>('/api/auth/me'),
+  logout: () => api.post<{ ok: boolean }>('/api/auth/logout'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post<{ ok: boolean; user: AccountUser }>('/api/auth/password', { currentPassword, newPassword }),
+  users: () => api.get<{ ok: boolean; users: AccountUser[]; passwordDays: number; file: string }>('/api/auth/users'),
+  createUser: (b: { username: string; displayName?: string; role: 'owner' | 'member'; password?: string }) =>
+    api.post<{ ok: boolean; user: AccountUser; tempPassword?: string }>('/api/auth/users', b),
+  updateUser: (username: string, b: { displayName?: string | null; role?: 'owner' | 'member'; disabled?: boolean; mustChangePassword?: boolean }) =>
+    api.patch<{ ok: boolean; user: AccountUser }>(`/api/auth/users/${encodeURIComponent(username)}`, b),
+  resetUserPassword: (username: string, password?: string) =>
+    api.post<{ ok: boolean; user: AccountUser; tempPassword?: string }>(
+      `/api/auth/users/${encodeURIComponent(username)}/reset`,
+      { password },
+    ),
+
   works: () => api.get<{ works: WorkView[] }>('/api/works'),
   work: (id: string) => api.get<WorkDetail>(`/api/works/${encodeURIComponent(id)}`),
   rep: (id: string) => api.get<RepContent>(`/api/reps/${encodeURIComponent(id)}/content`),
@@ -126,6 +199,7 @@ export const endpoints = {
   system: () => api.get<SystemView>('/api/system'),
   manifest: () => api.get<{ manifest: ManifestView }>('/api/agent/manifest'),
   objects: (type?: string) => api.get<{ objects: Record<string, unknown>[]; total: number }>(`/api/objects${type ? `?type=${type}` : ''}`),
+  object: (id: string) => api.get<ObjectPeekView>(`/api/object/${encodeURIComponent(id)}`),
 
   /** base 必填：客户端（人或 Agent）看到的基准。没有它，外部抢先的改动会被静默覆盖 */
   propose: (
@@ -246,6 +320,23 @@ export interface ActionView {
   flow: string; state: string; projectId?: string; rev: number;
 }
 export interface EventView { id: string; title: string; start: string; end: string; projectId?: string }
+
+/** 点开一行看到的东西。字段按类型宽松列，任务看 text/due，笔记看 title/status */
+export interface ObjectLinkView { id: string; kind: string; title: string; rel: string }
+export interface ObjectPeekView {
+  object: {
+    id: string; type: string; rev?: number; archivedAt?: string; author?: string; updatedAt?: string;
+    text?: string; title?: string; slug?: string;
+    due?: string; scheduled?: [string, string]; flow?: string; state?: string;
+    start?: string; end?: string; status?: string; tags?: string[]; summary?: string;
+    projectId?: string;
+    /** frontmatter source 是外链时，这里是原文地址 */
+    sourceUrl?: string;
+  };
+  path: string;
+  links: ObjectLinkView[];
+  events: { id: string; at: string; actor: string; op: string; summary: string }[];
+}
 export interface ProjectView {
   id: string; title: string; state: string; desc?: string;
   actions: ActionView[]; done: number;

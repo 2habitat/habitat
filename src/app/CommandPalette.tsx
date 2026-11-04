@@ -21,6 +21,13 @@ export function CommandPalette() {
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // ⌘K 打开后要能直接打字。之前只挂了 data-autofocus 标记，没人读它，
+  // 结果每次都得先用鼠标点一下输入框。
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
 
   const cmds = useMemo<Cmd[]>(() => {
     const nav: Cmd[] = ROUTES.filter((r) => !['reader', 'editor'].includes(r.id)).map((r) => ({
@@ -95,6 +102,7 @@ export function CommandPalette() {
     <div className="overlay overlay-center" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
       <div className="palette" role="dialog" aria-modal="true" aria-label="命令面板" data-testid="palette">
         <input
+          ref={inputRef}
           className="palette-input"
           placeholder="输入命令，或输入关键词检索全库…"
           value={q}

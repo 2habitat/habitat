@@ -1,22 +1,30 @@
 /**
- * 一个进程、一个端口：同时吐前端和接口，并带 Token 鉴权。
+ * 一个进程、一个端口：同时吐前端和接口，并带鉴权。
  *
  * 为什么要鉴权：这个进程常常会被反向隧道 / 内网穿透暴露到公网，
  * 知识库里全是 private 内容，裸奔等于把整库公开。
+ *
+ * 两种凭据（见 server/auth.ts）：
+ *   - 用户名密码 → 人的会话 Cookie（kb_session），支持首次登录 / 过期 / 管理员重置后强制改密
+ *   - 访问令牌   → 脚本与 Agent（Cookie kb_token / Authorization: Bearer），不受改密限制
  *
  * 与现有基础设施的契约（不要随意改）：
  *   - 监听 127.0.0.1:<port>，由家里那台的 SSH 反向隧道转到服务器 18765
  *   - GET /healthz 免鉴权、返回 200，给 nginx 与 doctor 探活
  *   - 未登录访问页面 → 302 到 /login；访问接口 → 401
- *   - Cookie 名沿用 kb_token、属性与旧看板一致，现有会话不用重新登录
+ *   - 令牌 Cookie 名沿用 kb_token，现有脚本 / 会话不用改
  */
-import Fastify, { type FastifyRequest } from 'fastify';
+import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { api } from './routes/api.ts';
+import { authPlugin } from './auth.ts';
+import {
+  AuthService, defaultAuthFile, defaultPasswordDays, normalizeAuthMode, type AuthMode,
+} from './core/auth.ts';
 import { runRules } from './core/rules.ts';
 import { runReminders } from './core/reminders.ts';
 import { sendDailyBrief } from './core/tidy.ts';
@@ -25,8 +33,6 @@ export const DEFAULT_ROOT = process.env.HABITAT_SPACE ?? path.resolve('space');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
-const COOKIE = 'kb_token';
-const MAX_AGE = 2592000; // 30 天，与旧看板一致
 
 const VERSION = (() => {
   try {
@@ -38,83 +44,59 @@ const VERSION = (() => {
 
 export interface ServerOpts {
   root?: string;
-  /** 访问令牌；空字符串表示不鉴权（仅限本机开发） */
+  /** 访问令牌；空字符串表示不启用令牌 */
   token?: string;
   /** 前端产物目录；没有就只提供接口 */
   dist?: string;
+  /** auto：有账号就开密码登录；on：没有账号也开并初始化管理员；off：只留令牌 */
+  authMode?: AuthMode;
+  /** 账号文件；默认 ~/.habitat/auth.json */
+  usersFile?: string;
+  /** 密码有效期天数；0 = 永不过期 */
+  passwordDays?: number;
+  /** 令牌 Cookie 名（沿用旧看板） */
+  tokenCookie?: string;
+  /** 人的会话 Cookie 名 */
+  sessionCookie?: string;
 }
-
-function cookieOf(req: FastifyRequest, key: string): string {
-  const raw = req.headers.cookie ?? '';
-  for (const part of raw.split(';')) {
-    const i = part.indexOf('=');
-    if (i < 0) continue;
-    if (part.slice(0, i).trim() !== key) continue;
-    const v = part.slice(i + 1).trim();
-    try {
-      return decodeURIComponent(v);
-    } catch {
-      return v;
-    }
-  }
-  return '';
-}
-
-function bearerOf(req: FastifyRequest): string {
-  const h = req.headers.authorization ?? '';
-  if (h.toLowerCase().startsWith('bearer ')) return h.slice(7).trim();
-  const x = req.headers['x-kb-token'];
-  return typeof x === 'string' ? x.trim() : '';
-}
-
-/** 定长比较，不给按字节试探留口子 */
-function sameToken(a: string, b: string): boolean {
-  if (!a || !b || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-const LOGIN_HTML = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>登录 · Habitat</title>
-<style>
-  :root{--bg:#F6F1E7;--surface:#FFFDF9;--text:#201C17;--muted:#6B6157;--accent:#7A4B2A;--border:#E2D8C8}
-  *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
-       font:15px/1.7 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-  .card{width:min(420px,92vw);background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px}
-  h1{margin:0 0 6px;font:600 20px/1.4 Georgia,"Songti SC",serif}
-  p{margin:0 0 18px;color:var(--muted);font-size:13px}
-  input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;
-        font:inherit;color:inherit;outline:none}
-  input:focus{border-color:var(--accent)}
-  button{margin-top:14px;width:100%;padding:10px 12px;border:0;border-radius:8px;background:var(--accent);
-         color:#fff;font:600 15px/1.4 inherit;cursor:pointer}
-  .err{margin-top:10px;color:#A0342B;font-size:13px;min-height:1.2em}
-</style></head>
-<body><form class="card" method="post" action="/login">
-  <h1>Habitat</h1>
-  <p>这是私人的知识工作台。粘贴访问令牌，或直接用带 token 的链接打开。</p>
-  <input name="token" type="password" placeholder="访问令牌" autofocus autocomplete="current-password" />
-  <button type="submit">进入</button>
-  <div class="err">__ERR__</div>
-</form></body></html>`;
 
 export async function buildServer(opts: ServerOpts | string = {}) {
   const o: ServerOpts = typeof opts === 'string' ? { root: opts } : opts;
   const root = o.root ?? DEFAULT_ROOT;
   const token = (o.token ?? process.env.HABITAT_TOKEN ?? process.env.KB_TOKEN ?? '').trim();
   const dist = o.dist ?? DIST;
+  const mode = o.authMode ?? normalizeAuthMode(process.env.HABITAT_AUTH);
+  const auth = await AuthService.open({
+    file: o.usersFile ?? defaultAuthFile(),
+    passwordDays: o.passwordDays ?? defaultPasswordDays(),
+  });
+
+  // 显式开启密码登录但一个账号都没有：造一个管理员，把临时密码打在启动日志里。
+  // 不这么做的话，第一次部署会卡在「登录页存在但没有账号可用」。
+  let bootTemp: string | undefined;
+  if (mode === 'on' && !auth.hasUsers()) {
+    const r = await auth.bootstrapAdmin({
+      username: process.env.HABITAT_ADMIN_USER?.trim() || 'admin',
+      password: process.env.HABITAT_ADMIN_PASSWORD || undefined,
+      mustChange: process.env.HABITAT_ADMIN_FORCE_CHANGE !== '0',
+    });
+    bootTemp = r.tempPassword;
+    console.log(`[habitat] 已创建初始管理员：${r.user.username}`);
+    if (bootTemp) {
+      console.log(`[habitat] 临时密码：${bootTemp}`);
+      console.log('[habitat] 这串密码只显示这一次；首次登录必须先修改。');
+    } else {
+      console.log('[habitat] 初始密码取自 HABITAT_ADMIN_PASSWORD；首次登录仍需修改');
+    }
+  }
+
+  const passwordEnabled = mode !== 'off' && auth.hasUsers();
+  if (mode === 'off' && auth.hasUsers()) {
+    console.warn('[habitat] HABITAT_AUTH=off：账号文件里有用户，但密码登录被显式关闭；没有令牌时所有请求都会放行');
+  }
 
   const app = Fastify({ logger: { level: process.env.HABITAT_LOG ?? 'info' }, bodyLimit: 8 * 1024 * 1024 });
   await app.register(cors, { origin: true });
-
-  const secure = (req: FastifyRequest) => String(req.headers['x-forwarded-proto'] ?? '').includes('https');
-  const cookie = (req: FastifyRequest, value: string, maxAge: number) =>
-    `${COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` +
-    (secure(req) ? '; Secure' : '');
 
   // 字段与旧看板保持一致：kb_remote.py 的 doctor 会看 auth / version，
   // 换成别的形状它会把「正常」判成「异常」。
@@ -124,48 +106,18 @@ export async function buildServer(opts: ServerOpts | string = {}) {
     service: 'habitat',
     version: VERSION,
     uptime: Math.round((Date.now() - startedAt) / 1000),
-    auth: Boolean(token),
+    auth: Boolean(token) || passwordEnabled,
+    auth_modes: [...(passwordEnabled ? ['password'] : []), ...(token ? ['token'] : [])],
+    users: passwordEnabled ? auth.count() : 0,
     read_only: false,
   }));
 
-  app.get('/login', async (req, reply) => {
-    const q = (req.query ?? {}) as { token?: string };
-    // 带 token 的链接直接登进去，省得在手机上再粘一遍
-    if (q.token && sameToken(q.token.trim(), token)) {
-      reply.header('set-cookie', cookie(req, token, MAX_AGE));
-      return reply.redirect('/');
-    }
-    return reply.type('text/html; charset=utf-8').send(LOGIN_HTML.replace('__ERR__', q.token ? '令牌不对，再试一次。' : ''));
-  });
-
-  app.post('/login', async (req, reply) => {
-    const b = (req.body ?? {}) as { token?: string };
-    if (!sameToken(String(b.token ?? '').trim(), token)) {
-      return reply.code(401).type('text/html; charset=utf-8').send(LOGIN_HTML.replace('__ERR__', '令牌不对，再试一次。'));
-    }
-    reply.header('set-cookie', cookie(req, token, MAX_AGE));
-    return reply.redirect('/');
-  });
-
-  app.get('/logout', async (req, reply) => {
-    reply.header('set-cookie', cookie(req, '', 0));
-    return reply.redirect('/login');
-  });
-
-  // 鉴权闸门：不配 token 就放行（本机开发）
-  app.addHook('onRequest', async (req, reply) => {
-    if (!token) return;
-    const url = req.url.split('?')[0];
-    if (url === '/healthz' || url.startsWith('/login') || url.startsWith('/logout')) return;
-    if (sameToken(cookieOf(req, COOKIE), token) || sameToken(bearerOf(req), token)) return;
-    if (url.startsWith('/api')) {
-      return reply.code(401).send({
-        ok: false,
-        error: '未登录：带上 token（Cookie kb_token / Authorization: Bearer / X-KB-Token）',
-      });
-    }
-    if (req.method === 'GET' && String(req.headers.accept ?? '').includes('text/html')) return reply.redirect('/login');
-    return reply.code(401).send({ ok: false, error: '未登录' });
+  await app.register(authPlugin, {
+    service: auth,
+    token,
+    passwordEnabled,
+    tokenCookie: o.tokenCookie ?? process.env.HABITAT_COOKIE ?? 'kb_token',
+    sessionCookie: o.sessionCookie ?? process.env.HABITAT_SESSION_COOKIE ?? 'kb_session',
   });
 
   // 二进制上传：除了 JSON，这些内容类型一律按 Buffer 收。
@@ -220,9 +172,14 @@ export async function start(rootArg?: string) {
   });
 
   await app.listen({ port, host });
-  const tok = (process.env.HABITAT_TOKEN ?? process.env.KB_TOKEN ?? '').trim();
+  const modes: string[] = [];
+  if (app.habitatPasswordAuth) modes.push(`用户名密码（${app.habitatAuth.count()} 个账号）`);
+  if (app.habitatTokenAuth) modes.push('访问令牌');
   console.log(`[habitat] 服务已启动 http://${host}:${port}  空间：${root}`);
-  console.log(`[habitat] 鉴权：${tok ? '已开启（Cookie kb_token / Authorization: Bearer）' : '未开启（仅限本机）'}`);
+  console.log(`[habitat] 鉴权：${modes.length ? `已开启 · ${modes.join(' + ')}` : '未开启（仅限本机）'}`);
+  if (app.habitatPasswordAuth) {
+    console.log(`[habitat] 账号文件：${app.habitatAuth.file}（密码有效期 ${app.habitatAuth.passwordDays || '不限'} 天）`);
+  }
 
   // 规则调度：让「自动化」真的会自己跑。只产出通知，不碰正文。
   const rulesMs = Number(process.env.HABITAT_RULES_MS ?? 300000);

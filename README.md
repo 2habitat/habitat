@@ -97,6 +97,8 @@ habitat next                       # AI 该接手什么
 habitat refresh                    # 哪些东西冷掉了
 habitat renew <id>                 # 翻新证据包：它主张什么 + 哪几条可能撞上
 habitat review <id> --ok           # 确认仍成立 → 间隔往后推
+habitat user add <名字> --role owner   # 建账号（输出一次性临时密码）
+habitat user reset <名字>          # 重置密码，下次登录强制改密
 ```
 
 ### 交给 Agent 维护
@@ -121,14 +123,18 @@ src/           React 界面，按域拆（actions / library / changes / system �
 深入看：
 
 - [`docs/architecture.md`](docs/architecture.md) — 数据模型、写入路径、并发与冲突、索引重建
+- [`docs/auth.md`](docs/auth.md) — 用户名密码 / 令牌两种凭据、会话、强制改密与账号运维
 - [`docs/lifecycle.md`](docs/lifecycle.md) — 生命周期模型、活性与翻新机制
 - [`docs/workflow.md`](docs/workflow.md) — 开发与日常使用怎么分开，升级怎么不出事
 
 ## 安全与隐私
 
-- **数据不出机器**。默认只监听 `127.0.0.1`；要公网访问自己配隧道 + 令牌。
-- **凭据不进仓库**。`.env`、`mail.json`、`remote.json` 都在 `.gitignore` 里，
-  SMTP 密码/授权码存在 `~/.habitat/mail.json`，不放在数据目录（数据目录常被同步到云盘）。
+- **数据不出机器**。默认只监听 `127.0.0.1`；要公网访问自己配隧道 + 登录。
+- **两种凭据**。人用用户名密码（签名会话 Cookie，首次登录 / 管理员重置 / 超过有效期会强制改密）；
+  脚本与 Agent 用 `KB_TOKEN`（`Authorization: Bearer` 或 Cookie），互不影响。
+  账号文件在 `~/.habitat/auth.json`，不放空间目录。
+- **凭据不进仓库**。`.env`、`mail.json`、`auth.json`、`remote.json` 都在 `.gitignore` 里，
+  SMTP 密码/授权码存在 `~/.habitat/mail.json`，密码哈希存在 `~/.habitat/auth.json`。
 - **令牌**通过 `KB_TOKEN` 环境变量注入，不写进命令行、不写进文件。
 - **不删除，只归档**。归档写 `[archived:: 时间]` 标记，文件还在。
 - **原件只读**。带 `source` 的章节和 `assets/originals/` 下的文件不可改。
@@ -137,8 +143,8 @@ src/           React 界面，按域拆（actions / library / changes / system �
 
 ```bash
 npm run typecheck     # 严格模式
-npm run test:unit     # 57 条：扫描、变更、索引、生命周期、翻新、邮件
-npm run test:e2e      # 76 条：真浏览器跑完整流程
+npm run test:unit     # 87 条：扫描、变更、索引、生命周期、翻新、邮件、账号与强制改密
+npm run test:e2e      # 79 条：真浏览器跑完整流程
 ```
 
 E2E 在仓库内的 `.e2e-space` 里跑，每次重建，不碰你的真实数据。

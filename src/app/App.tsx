@@ -4,6 +4,8 @@ import { useUi, applyUiToDocument } from './ui.ts';
 import { AiPanel, AiFab } from './AiPanel.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 import { Sheets } from './Sheets.tsx';
+import { ObjectPeek } from './ObjectPeek.tsx';
+import { useListNav } from './useListNav.ts';
 import { Toasts, Spinner } from '../components/ui.tsx';
 import { useToday, useInbox, useChangesSummary, useNotifications } from '../services/use.ts';
 
@@ -15,6 +17,7 @@ import { SearchPage, TagsPage, CollectionsPage, GraphPage } from '../domains/con
 import { AssistantPage, ChangesPage, JobsPage, AutomationPage } from '../domains/ai/pages.tsx';
 import { ChannelsPage, StoragePage, AgentPage, BudgetPage, HealthPage } from '../domains/system/pages.tsx';
 import { FilesPage } from '../domains/system/FilesPage.tsx';
+import { AccountPage } from '../domains/system/AccountPage.tsx';
 
 export function App() {
   const loc = useLocation();
@@ -36,7 +39,11 @@ export function App() {
     applyUiToDocument();
   }, [theme, fontSize]);
 
+  // 全站一套键盘：J/K 选行、Enter 打开、Space 预览、X 完成
+  useListNav();
+
   // 换页就收抽屉，否则手机上点完菜单还要手动关
+  // Peek 不用管：它挂在 URL 上，换页时参数自然没了
   useEffect(() => {
     setDrawer(false);
   }, [loc.id, setDrawer]);
@@ -168,6 +175,7 @@ export function App() {
       <AiFab />
       <AiPanel />
       <CommandPalette />
+      <ObjectPeek />
       <Sheets />
       <Toasts />
     </div>
@@ -186,7 +194,7 @@ function Page({ id, params }: { id: ReturnType<typeof useLocation>['id']; params
     case 'shelf': return <ShelfPage />;
     case 'continue': return <ContinuePage />;
     case 'compose': return <ComposePage />;
-    case 'reader': return <ReaderPage workId={params.work} repId={params.rep} />;
+    case 'reader': return <ReaderPage workId={params.work} repId={params.rep} partId={params.part} />;
     case 'editor': return <EditorPage repId={params.rep} noteId={params.id} />;
 
     case 'search': return <SearchPage q={params.q} />;
@@ -200,6 +208,7 @@ function Page({ id, params }: { id: ReturnType<typeof useLocation>['id']; params
     case 'automation': return <AutomationPage />;
 
     case 'storage': return <StoragePage />;
+    case 'account': return <AccountPage />;
     case 'agent': return <AgentPage />;
     case 'budget': return <BudgetPage />;
     case 'files': return <FilesPage />;
