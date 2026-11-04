@@ -26,69 +26,84 @@ function shell(title: string, body: string, script = ''): string {
 <title>${escapeHtml(title)} · Habitat</title>
 <style>
   :root{
-    --bg:#f7f6f3;--surface:#fffefb;--surface-2:#faf8f4;--border:#e3ddd3;--border-strong:#9c8e7a;
-    --text:#2b2825;--text-2:#5f5952;--text-3:#6f665c;--accent:#7d5f42;--accent-soft:#f0e6da;
-    --danger:#a8443a;--danger-soft:#f7e6e3;--warn:#a5761f;--ok:#4a7c59;--info:#3f6b8f;
-    --accent-text:#fff;--radius:10px;
+    --bg:#f1ece1;--surface:#fbf7ed;--surface-2:#f6f1e5;--border:#e4dccb;--border-strong:#cdc2ac;
+    --text:#1e1b17;--text-2:#4e483f;--text-3:#6f675b;
+    --accent:#b0432b;--accent-ink:#8f3520;--accent-soft:#f6e3db;--accent-text:#fff;
+    --danger:#a8332b;--danger-soft:#f7e6e2;--warn:#8d6118;--warn-soft:#f7edd8;--ok:#4d6b45;--info:#2f5d80;
+    --radius:2px;
+    --serif:"Noto Serif SC","Source Han Serif SC","Songti SC",STSong,SimSun,Georgia,serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   @media (prefers-color-scheme: dark){
     :root{
-      --bg:#16171a;--surface:#1e2024;--surface-2:#24272c;--border:#33373e;--border-strong:#666d76;
-      --text:#e7e6e3;--text-2:#b0aea9;--text-3:#96928b;--accent:#c9a37a;--accent-soft:#2f2a22;
-      --danger:#d98b80;--danger-soft:#30211f;--warn:#d3ab5e;--ok:#7fb99a;--info:#7fa8c4;
-      --accent-text:#1a1815;
+      --bg:#121314;--surface:#1a1b1d;--surface-2:#202225;--border:#2f3236;--border-strong:#4a4f56;
+      --text:#eae5da;--text-2:#b3ada1;--text-3:#8a8478;
+      --accent:#d9756a;--accent-ink:#efb68f;--accent-soft:#3a221d;--accent-text:#1a1411;
+      --danger:#d9756a;--danger-soft:#3a211e;--warn:#c8a05a;--warn-soft:#332a19;--ok:#8fae87;--info:#7fa8c4;
     }
   }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{
     margin:0;background:var(--bg);color:var(--text);
-    font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font:15px/1.7 "PingFang SC","HarmonyOS Sans SC","Noto Sans SC","Microsoft YaHei",-apple-system,sans-serif;
     display:grid;place-items:center;padding:clamp(16px,4vw,40px);
+    background-image:radial-gradient(circle at 50% 0,color-mix(in srgb,var(--surface) 55%,transparent) 0,transparent 62%);
   }
-  .wrap{width:min(420px,100%)}
-  .brand{display:flex;align-items:baseline;gap:8px;margin:0 2px 14px;color:var(--text-2);font-size:13px}
-  .mark{width:9px;height:9px;border-radius:50%;background:var(--accent);display:inline-block;transform:translateY(-1px)}
-  .brand b{color:var(--text);font:600 15px/1 Georgia,"Songti SC",serif;letter-spacing:.02em}
-  .brand .stage{margin-left:auto;color:var(--text-3);font-size:11px}
+  .wrap{width:min(430px,100%)}
+  .brand{display:flex;align-items:center;gap:10px;margin:0 2px 16px}
+  .seal{
+    width:26px;height:26px;flex:none;display:grid;place-items:center;border-radius:var(--radius);
+    background:var(--accent);color:var(--accent-text);font:600 15px/1 var(--serif);
+  }
+  .lockup{display:flex;flex-direction:column;line-height:1.15}
+  .lockup b{font:600 14px/1.2 var(--serif);letter-spacing:.04em;color:var(--text)}
+  .lockup i{font-style:normal;font-size:10px;letter-spacing:.18em;color:var(--text-3);margin-top:2px}
+  .brand .stage{margin-left:auto;color:var(--text-3);font:10px/1.4 var(--mono);letter-spacing:.06em;text-align:right}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:clamp(22px,5vw,30px)}
-  h1{margin:0 0 6px;font:600 22px/1.35 Georgia,"Songti SC","Songti TC",serif;letter-spacing:.01em}
-  .lede{margin:0 0 20px;color:var(--text-2);font-size:13px;line-height:1.7}
-  .who{display:flex;align-items:center;gap:8px;margin-bottom:14px;color:var(--text-3);font-size:12px}
+  h1{margin:0 0 6px;font:600 clamp(22px,4.6vw,27px)/1.32 var(--serif);letter-spacing:.01em}
+  .lede{margin:0 0 20px;color:var(--text-2);font-size:13px;line-height:1.75}
+  .who{display:flex;align-items:center;gap:8px;margin-bottom:14px;color:var(--text-3);font:12px/1.5 var(--mono)}
   .who b{color:var(--text-2);font-weight:600}
-  .chip{border:1px solid var(--border);border-radius:99px;padding:0 8px;font-size:11px;color:var(--text-2)}
+  .chip{border:1px solid var(--border);border-radius:var(--radius);padding:0 7px;font-size:11px;color:var(--text-2)}
   form{margin:0}
   label{display:block;margin-bottom:14px}
-  label>span{display:block;margin-bottom:5px;color:var(--text-2);font-size:12px;font-weight:600}
+  label>span{display:block;margin-bottom:5px;color:var(--text-2);font:10.5px/1.6 var(--mono);letter-spacing:.14em;text-transform:uppercase}
   input{
-    width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--border-strong);border-radius:8px;
+    width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--border-strong);border-radius:var(--radius);
     background:var(--surface);color:var(--text);font:inherit;outline:none;
+    transition:border-color .14s ease,box-shadow .14s ease;
   }
-  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  input:focus{border-color:var(--text-3);box-shadow:0 0 0 3px color-mix(in srgb,var(--text) 7%,transparent)}
   button{
-    width:100%;min-height:44px;margin-top:6px;border:0;border-radius:8px;cursor:pointer;
-    background:var(--accent);color:var(--accent-text);font:600 15px/1.4 inherit;
+    width:100%;min-height:44px;margin-top:6px;border:0;border-radius:var(--radius);cursor:pointer;
+    background:var(--accent);color:var(--accent-text);font:600 15px/1.4 inherit;letter-spacing:.02em;
+    transition:filter .14s ease,transform .14s ease;
   }
-  button:hover{filter:brightness(1.06)}
+  button:hover{filter:brightness(1.05)}
   button:active{transform:translateY(1px)}
-  .msg{margin:0 0 14px;padding:9px 11px;border-radius:8px;font-size:13px;line-height:1.6;border:1px solid transparent}
-  .msg-err{background:var(--danger-soft);color:var(--danger)}
-  .msg-note{background:var(--accent-soft);color:var(--text-2)}
+  .msg{margin:0 0 14px;padding:9px 11px;border:1px solid transparent;border-left-width:2px;border-radius:var(--radius);font-size:13px;line-height:1.6}
+  .msg-err{background:var(--danger-soft);color:var(--danger);border-left-color:var(--danger)}
+  .msg-note{background:var(--accent-soft);color:var(--text-2);border-left-color:var(--accent)}
   .alt{margin-top:16px;padding-top:14px;border-top:1px solid var(--border);font-size:12px;color:var(--text-3);text-align:center}
-  .alt a{color:var(--accent);text-decoration:none}
-  .alt a:hover{text-decoration:underline}
+  .alt a{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+  .alt a:hover{border-bottom-color:var(--accent)}
   .rules{margin:2px 0 16px;padding:0;list-style:none;font-size:12px;color:var(--text-3);line-height:1.9}
   .rules li::before{content:"·";margin-right:6px;color:var(--border-strong)}
-  .meter{height:6px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin:-4px 0 5px}
-  .meter>i{display:block;height:100%;width:0;background:var(--danger);border-radius:99px;transition:width .16s ease,background .16s ease}
+  .meter{height:4px;background:var(--surface-2);overflow:hidden;margin:-4px 0 5px}
+  .meter>i{display:block;height:100%;width:0;background:var(--danger);transition:width .16s ease,background .16s ease}
   .meter>i[data-level="2"]{background:var(--warn)}
   .meter>i[data-level="3"],.meter>i[data-level="4"]{background:var(--ok)}
-  .meter-label{font-size:11px;color:var(--text-3);margin:0 0 14px;min-height:1.2em}
-  footer{margin-top:14px;text-align:center;color:var(--text-3);font-size:11px;letter-spacing:.02em}
-  @media (max-width:420px){ .card{padding:20px} h1{font-size:20px} }
+  .meter-label{font:11px/1.5 var(--mono);color:var(--text-3);margin:0 0 14px;min-height:1.2em}
+  footer{margin-top:14px;text-align:center;color:var(--text-3);font:10px/1.6 var(--mono);letter-spacing:.1em}
+  @media (max-width:420px){ .card{padding:20px} h1{font-size:20px} .brand .stage{display:none} }
 </style></head>
 <body><div class="wrap">
-  <div class="brand"><span class="mark"></span><b>Habitat</b><span class="stage">自托管 · 文件是事实源</span></div>
+  <div class="brand">
+    <span class="seal" aria-hidden="true">栖</span>
+    <span class="lockup"><b>Habitat</b><i>个人档案</i></span>
+    <span class="stage">自托管 · 文件是事实源</span>
+  </div>
   <main class="card">${body}</main>
   <footer>数据不离开这台机器</footer>
 </div>${script}</body></html>`;
