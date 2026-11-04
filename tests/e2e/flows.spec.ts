@@ -946,3 +946,17 @@ test('文件：搜索能收窄、无结果有提示、排序可正反切换', as
     expect(await rows.nth(i).innerText()).toContain('未入库');
   }
 });
+
+/* ---------------- 闭环：状态可见，自检能跑 ---------------- */
+
+test('闭环：状态列表、详情与自检', async ({ page }) => {
+  await page.goto('/#/loops');
+  await page.waitForSelector('.app', { timeout: 45000 });
+  await expect(page.locator('.topbar-title')).toHaveText('闭环');
+  await expect(page.locator('[data-testid="loops-list"]')).toBeVisible();
+  // 夹具空间没有回执，默认「需要处理」筛选里应该有 never 的条目
+  await page.locator('[data-testid="loop-expand"]').first().click();
+  await expect(page.locator('[data-testid="loop-detail"]')).toBeVisible();
+  await page.click('[data-testid="loops-check"]');
+  await expect(page.locator('[data-testid="loop-check"]')).toBeVisible();
+});

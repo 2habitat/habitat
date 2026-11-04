@@ -23,10 +23,11 @@ import { parseScheduled } from './core/inline.ts';
 import { AuthService, defaultAuthFile, defaultPasswordDays, type Role } from './core/auth.ts';
 import {
   computeStatuses, renderStatuses, runLoop, beat, loadAutomation, saveAutomation,
-  checkAutomation, renderCheck, agentBrief,
+  checkAutomation, renderCheck, agentBrief, claimTarget, releaseClaims, listClaims,
+  listLeases, runLoopAlerts,
 } from './core/loops.ts';
 import {
-  LOOPS, loopById, renderManual, triggerLabel, cronOf, MODE_LABEL, AUTONOMY_LABEL,
+  LOOPS, loopById, renderManual, renderSpaceGuide, triggerLabel, cronOf, MODE_LABEL, AUTONOMY_LABEL,
   EXECUTOR_LABEL, CAP_LABEL, fitAll, humanMinutes, type HarnessProfile,
 } from '../shared/loops.ts';
 import { runRules } from './core/rules.ts';
@@ -108,6 +109,12 @@ function usage(): string {
                                            记一次回执：证明这次真的跑过、跑出了什么
   habitat loops bind --harness <profile.yaml> [--assign] [--cron]
                                            声明 harness 能力，算它能接哪些闭环
+  habitat loops claim <id> <target> [--ttl 120]
+                                           认领工单里的一条，避免两个 agent 重复做
+  habitat loops release <id> [--by …]      归还认领（beat 会自动归还）
+  habitat loops alerts [--mail]            把 down 的闭环推进通知（可选邮件）
+  habitat loops leases                     当前谁在执行（租约）
+  habitat loops init [--force]             在空间根写 AGENTS.md（给外部 harness 的操作手册）
   habitat loops brief                      给外部 harness 的交接单（该做什么、别做什么）
   habitat loops manual [--out docs/…md]    从目录生成参考手册（不要手改手册）
   habitat attach <文件> [--as 名字] [--dir originals] [--markdown]   上传附件，给出可插入的 markdown
@@ -367,17 +374,18 @@ async function loopsCommand(hab: Habitat, sub?: string): Promise<number> {
     await saveAutomation(hab, cfg);
 
     const fits = fitAll(profile);
+    const na = fits.filter((f) => loopById(f.loop)?.serverOnly);
     const full = fits.filter((f) => f.level === 'full');
     const partial = fits.filter((f) => f.level === 'partial');
-    const none = fits.filter((f) => f.level === 'none');
+    const none = fits.filter((f) => f.level === 'none' && !loopById(f.loop)?.serverOnly);
 
     if (json) {
-      console.log(JSON.stringify({ harness: profile, summary: { full: full.length, partial: partial.length, none: none.length }, fits }, null, 2));
+      console.log(JSON.stringify({ harness: profile, summary: { full: full.length, partial: partial.length, none: none.length, inProcess: na.length }, fits }, null, 2));
       return 0;
     }
 
     console.log(`harness：${profile.name} · 调度 ${profile.scheduler}${profile.timezone ? ` · ${profile.timezone}` : ''}`);
-    console.log(`完整 ${full.length} · 部分 ${partial.length} · 接不了 ${none.length}\n`);
+    console.log(`完整 ${full.length} · 部分 ${partial.length} · 接不了 ${none.length} · 进程内 ${na.length}\n`);
     for (const f of full) {
       const d = loopById(f.loop)!;
       console.log(`  ✓ ${d.id.padEnd(21)} ${f.cron ?? '按需'}  ${f.command ?? d.entry.api ?? ''}`);
@@ -389,6 +397,10 @@ async function loopsCommand(hab: Habitat, sub?: string): Promise<number> {
     for (const f of none) {
       const d = loopById(f.loop)!;
       console.log(`  ✗ ${d.id.padEnd(21)} ${f.why}`);
+    }
+    for (const f of na) {
+      const d = loopById(f.loop)!;
+      console.log(`  — ${d.id.padEnd(21)} ${f.why}`);
     }
     console.log(`\n已写入 ${'.habitat/state/automation.json'}${flag('assign') ? '（完整可承担的已声明归属）' : '（只记能力，未改归属；要自动归属加 --assign）'}`);
 
@@ -417,6 +429,70 @@ async function loopsCommand(hab: Habitat, sub?: string): Promise<number> {
 
   if (sub === 'brief') {
     console.log(await agentBrief(hab));
+    return 0;
+  }
+
+  if (sub === 'claim') {
+    const id = positional()[1];
+    const target = positional()[2];
+    const def = id ? loopById(id) : undefined;
+    if (!def || !target) return console.log('用法：habitat loops claim <id> <target> [--ttl 120]'), 1;
+    if (def.mode === 'auto' || def.mode === 'verify') {
+      return console.log(`${def.name} 是${def.mode === 'auto' ? '自动' : '验证'}类，不需要认领；直接 loops run。`), 1;
+    }
+    const by = arg('actor') ?? 'human';
+    const ttl = Number(arg('ttl') ?? process.env.HABITAT_CLAIM_MIN ?? 120);
+    const r = await claimTarget(hab, id, target, by, ttl);
+    if (!r.ok) {
+      console.log(`已被 ${r.holder.by} 认领（到 ${r.holder.until.slice(5, 16).replace('T', ' ')}）`);
+      return 1;
+    }
+    console.log(`已认领：${id} / ${target}（${by}，${ttl} 分钟后过期）`);
+    console.log('做完记得：habitat loops beat ' + id + ' --ok --produced ' + target);
+    return 0;
+  }
+
+  if (sub === 'release') {
+    const id = positional()[1];
+    if (!id || !loopById(id)) return console.log('用法：habitat loops release <id> [--by <执行者>]'), 1;
+    const by = arg('by') ?? arg('actor');
+    const n = await releaseClaims(hab, id, by);
+    console.log(`已释放 ${n} 条认领${by ? `（${by}）` : '（该闭环全部）'}`);
+    return 0;
+  }
+
+  if (sub === 'alerts') {
+    const r = await runLoopAlerts(hab, { mail: flag('mail') });
+    console.log(`告警检查：${r.alerted.length} 条 down 已推通知${r.mailed ? '，并发了邮件' : ''}`);
+    for (const x of r.alerted) console.log(`  ⛔ ${x.id}：${x.reason}`);
+    for (const x of r.skipped) console.log(`  · ${x}`);
+    if (r.mailError) console.log(`  邮件失败：${r.mailError}`);
+    return 0;
+  }
+
+  if (sub === 'leases') {
+    const leases = await listLeases(hab);
+    const rows = Object.entries(leases);
+    if (!rows.length) {
+      console.log('当前没有执行中的闭环（租约为空）。');
+      return 0;
+    }
+    console.log('闭环                    执行者            到期');
+    for (const [id, l] of rows) console.log(`${id.padEnd(22)}  ${l.owner.padEnd(16)}  ${l.until.slice(5, 16).replace('T', ' ')}`);
+    return 0;
+  }
+
+  if (sub === 'init') {
+    const rel = 'AGENTS.md';
+    const exists = await hab.store.adapter.stat(rel).catch(() => null);
+    if (exists && !flag('force')) {
+      console.log(`${path.join(hab.store.root, rel)} 已存在。要覆盖加 --force。`);
+      return 0;
+    }
+    const md = renderSpaceGuide({ space: hab.store.space.name || hab.store.root, generatedAt: nowISO() });
+    await hab.store.adapter.write(rel, md, { backup: true });
+    console.log(`已写入 ${path.join(hab.store.root, rel)}（${LOOPS.length} 条闭环）`);
+    console.log('外部 harness 进入这个空间时先读它：三条硬规矩、怎么接闭环、怎么交账。');
     return 0;
   }
 

@@ -19,6 +19,7 @@ export const qk = {
   proposals: ['proposals'] as const,
   jobs: ['jobs'] as const,
   system: ['system'] as const,
+  loops: ['loops'] as const,
   manifest: ['manifest'] as const,
   objects: (t?: string) => ['objects', t ?? ''] as const,
 };
@@ -50,6 +51,8 @@ export function useChanges() { return useQuery({ queryKey: qk.changes, queryFn: 
 export function useProposals() { return useQuery({ queryKey: qk.proposals, queryFn: endpoints.proposals }); }
 export function useJobs() { return useQuery({ queryKey: qk.jobs, queryFn: endpoints.jobs }); }
 export function useSystem() { return useQuery({ queryKey: qk.system, queryFn: endpoints.system }); }
+/** 闭环状态：30 秒一轮，够快看到 down，也不至于把服务打满 */
+export function useLoops() { return useQuery({ queryKey: qk.loops, queryFn: endpoints.loops, refetchInterval: 30_000 }); }
 export function useManifest() { return useQuery({ queryKey: qk.manifest, queryFn: endpoints.manifest }); }
 export function useObjects(type?: string) { return useQuery({ queryKey: qk.objects(type), queryFn: () => endpoints.objects(type) }); }
 /** Peek 面板的数据源。id 为空时不发请求 */

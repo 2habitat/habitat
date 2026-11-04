@@ -119,6 +119,9 @@ habitat loops check                # 自检：静默、没归属、两个执行�
 habitat loops run triage-inbox     # 判断类只出工单；确定性类才真跑
 habitat loops beat triage-inbox --ok --produced note-xxx   # 跑完交账
 habitat loops bind --harness my.yaml --cron                # 外部 harness 能接哪些
+habitat loops claim triage-inbox <id>                      # 认领一条，避免和别的 agent 撞
+habitat loops alerts                                       # 把 down 的闭环推进通知
+habitat loops init                                         # 在空间根写 AGENTS.md（给外部 Agent 的操作手册）
 ```
 
 规则很简单：**没有回执等于没跑**。平台定时器和外部 cron 谁跑都行，跑完记一笔；
@@ -127,6 +130,8 @@ habitat loops bind --harness my.yaml --cron                # 外部 harness 能�
 - 设计与失配分析：[`docs/automation-loops.md`](docs/automation-loops.md)
 - 19 条闭环的参考手册：[`docs/automation-manual.md`](docs/automation-manual.md)
 - harness 能力声明示例：[`docs/examples/harness.yaml`](docs/examples/harness.yaml)
+- 给 Agent 的项目上下文：[`AGENTS.md`](AGENTS.md)
+- 可移植技能（操作空间、接闭环）：[`skills/habitat-automation/SKILL.md`](skills/habitat-automation/SKILL.md)
 
 ## 架构
 

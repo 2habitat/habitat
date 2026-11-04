@@ -154,17 +154,24 @@ SQLite 存的是 token 倒排 + 对象快照，**完全由文件派生**：
 每条闭环写清触发、入口、步骤、产物、证据、幂等、降级。运行时只有两个文件：
 
 ```
-.habitat/state/automation.json   启停 / 归属 / harness 能力声明
-.habitat/state/loop-runs.jsonl   回执：谁在什么时候跑的、结果、产物 id（只追加）
+.habitat/state/automation.json    启停 / 归属 / harness 能力声明
+.habitat/state/loop-runs.jsonl    回执：谁在什么时候跑的、结果、产物 id（只追加）
+.habitat/state/loop-leases.json   执行租约：同一时刻只让一个执行者进去（10 分钟过期）
+.habitat/state/loop-claims.json   工单认领：判断类条目先到先得（120 分钟过期）
 ```
 
 - 健康：`habitat loops status` → `ok / late / down / never / blocked / paused / manual`
 - 自检：`habitat loops check` → 静默、无归属、十分钟内重复执行
+- 告警：`down` 推站内通知（每条每天一次），`HABITAT_LOOP_ALERT_MAIL=1` 同时发信
+- 认领：`habitat loops claim <id> <target>`，`beat` 自动释放
 - 对接：`habitat loops bind --harness profile.yaml` → 能接哪些、缺什么、cron 怎么配
 - 手册：`habitat loops manual` 从目录生成，不手写
 
 判断类闭环（`mode=assist`）没有服务端执行器：`loops run` 只出一张工单，
 模型或人做完后用 `loops beat` 交账。这是硬约束——测试会拦「判断类自动 commit」。
+
+平台侧入口：`#/loops` 页面 + `GET /api/loops`；外部 harness 入口：
+空间根的 `AGENTS.md`（`habitat loops init` 生成）与 `skills/habitat-automation/SKILL.md`。
 
 设计、失配分析与调研见 [`automation-loops.md`](automation-loops.md)，
 逐条说明见 [`automation-manual.md`](automation-manual.md)。
@@ -238,8 +245,8 @@ SQLite 存的是 token 倒排 + 对象快照，**完全由文件派生**：
 
 | 层 | 数量 | 覆盖什么 |
 |---|---|---|
-| 单元 | 87 | 扫描、id 稳定性、变更校验、索引、生命周期判定、翻新召回、邮件解析、账号与强制改密 |
-| E2E | 79 | 真浏览器：采集→收件箱→衍生、提案→提交→撤销、上传、提醒配置、管家代谢 |
+| 单元 | 129 | 扫描、id 稳定性、变更校验、索引、生命周期判定、翻新召回、邮件解析、账号、闭环租约与认领 |
+| E2E | 81 | 真浏览器：采集→收件箱→衍生、提案→提交→撤销、上传、提醒配置、管家代谢、闭环页 |
 
 E2E 用 `tests/helpers/space.ts` 里的固定夹具，每次在 `.e2e-space` 重建，不碰真实数据。
 邮件相关测试通过 `HABITAT_MAIL_CONFIG` 指向临时文件，绝不读真实凭据。

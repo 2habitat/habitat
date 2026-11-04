@@ -217,7 +217,7 @@ export const LOOPS: LoopDef[] = [
     name: '对账',
     family: 'maintain',
     intent: '把「谁改的」说清楚：外部改动记成 external_edit，可认领，不覆盖。',
-    trigger: { kind: 'event', on: '人工 / harness 触发，建议每日一次' },
+    trigger: { kind: 'daily', at: '03:30', note: '服务端不内置；由 harness 或人按天跑' },
     maxSilenceMinutes: 2880,
     mode: 'auto',
     autonomy: 'derived',
@@ -240,7 +240,7 @@ export const LOOPS: LoopDef[] = [
     name: '代谢归档',
     family: 'maintain',
     intent: '已完成超过 30 天的任务自动归档——不删文件，只打标记，可整批撤销。',
-    trigger: { kind: 'daily', at: '03:00' },
+    trigger: { kind: 'interval', minutes: 360, note: '服务内每 6 小时；harness 也可以按天跑' },
     maxSilenceMinutes: 2880,
     mode: 'auto',
     autonomy: 'commit',
@@ -376,7 +376,7 @@ export const LOOPS: LoopDef[] = [
     executors: ['platform-agent', 'external-harness', 'human'],
     requires: ['model', 'invoke:cli'],
     entry: {
-      cli: 'habitat next / habitat list --what inbox',
+      cli: 'habitat next',
       api: 'GET /api/inbox · GET /api/lifecycle',
       ui: '收件箱',
     },
@@ -508,7 +508,7 @@ export const LOOPS: LoopDef[] = [
     executors: ['human', 'platform-agent'],
     requires: ['model', 'human:approve'],
     entry: {
-      cli: 'habitat review <id> --ok|--stale',
+      cli: 'habitat review <id> --ok',
       api: 'POST /api/review/:id',
       ui: '复盘',
     },
@@ -724,7 +724,7 @@ export function loopHeadline(d: LoopDef): string {
 export function evaluateLoop(
   def: LoopDef,
   last: LoopReceipt | undefined,
-  ctx: { now: number; enabled: boolean; blocked?: string[]; backlog?: number },
+  ctx: { now: number; enabled: boolean; blocked?: string[]; backlog?: number; pausedReason?: string },
 ): LoopState {
   const base = {
     id: def.id,
@@ -735,7 +735,7 @@ export function evaluateLoop(
     lastResult: last?.result,
   };
 
-  if (!ctx.enabled) return { ...base, state: 'paused', reason: '已停用' };
+  if (!ctx.enabled) return { ...base, state: 'paused', reason: ctx.pausedReason ?? '已停用' };
   if (def.maxSilenceMinutes === 0) {
     return { ...base, state: 'manual', reason: '按需 / 事件触发，不做存活判定' };
   }
@@ -860,6 +860,84 @@ export function summarizeStates(states: LoopState[]): Record<string, number> {
   return out;
 }
 
+/**
+ * 空间级 AGENTS.md —— 外部 harness 进入一个空间时先读这一页。
+ *
+ * 为什么写在空间里而不是仓库里：harness 通常只拿到数据目录，
+ * 不一定知道工具源码在哪。把「怎么用、怎么交账、别做什么」放在数据旁边，
+ * 比让它去翻 README 可靠。
+ */
+export function renderSpaceGuide(opts: { space: string; generatedAt: string }): string {
+  const lines: string[] = [];
+  const push = (...xs: string[]) => lines.push(...xs);
+  push('# 这个空间怎么用（给 Agent 的操作手册）', '');
+  push(`空间：${opts.space}`);
+  push(`生成：${opts.generatedAt}`);
+  push('由 `habitat loops init` 生成；改工具版本后重新生成，不要手改。', '');
+
+  push('## 0. 三条硬规矩', '');
+  push('1. **不要直接改文件**。所有内容变更走 `habitat propose` → 校验 → `commit`；判断类只能提案。');
+  push('2. **不要删除**。不用的东西用 `habitat archive`；归档是可撤销的。');
+  push('3. **跑完必须交账**。任何闭环执行完，都要 `habitat loops beat <id>`，并在 `produced` 里写清产物 id。没有回执等于没跑。', '');
+
+  push('## 1. 进来先看什么', '');
+  push('```bash');
+  push('npx habitat status            # 连的是哪个空间、有多少东西');
+  push(`npx habitat loops status      # ${LOOPS.length} 条闭环：谁 ok、谁迟到、谁从没跑过、积压多少`);
+  push('npx habitat loops brief       # 交接单：现在该做什么、别做什么');
+  push('```', '');
+  push('如果 `status` 里出现 `down`，先修它或明确停用，不要假装没看见。', '');
+
+  push('## 2. 闭环怎么接', '');
+  push('| 模式 | 你能做什么 | 你不能做什么 |');
+  push('|---|---|---|');
+  push('| `auto` | 直接 `loops run <id>`；确定性步骤服务端会做完 | 改语义 |');
+  push('| `assist` | `loops run` 拿工单 → 逐条处理 → `beat` 交账 | 让服务端替你做判断、自动 commit |');
+  push('| `gate` | 准备提案、等人确认 | 替人点头 |');
+  push('| `verify` | 跑检查、出报告 | 改内容 |', '');
+  push('判断类工单里的每一条，动手前先认领，避免和别的 agent 重复：', '');
+  push('```bash');
+  push('npx habitat loops claim triage-inbox <对象 id> --ttl 120');
+  push('npx habitat loops release triage-inbox        # 没做完也要还回去');
+  push('```', '');
+  push('`beat` 会自动释放你名下该闭环的全部认领，所以「交账」也是「释放」。', '');
+
+  push('## 3. 定时任务怎么配（外部 harness）', '');
+  push('```bash');
+  push('npx habitat loops bind --harness harness.yaml --cron');
+  push('```', '');
+  push('它会输出三档：`✓ 能完整承担`（附 crontab）、`~ 只能承担一半`（写明缺什么）、`✗ 接不上`。');
+  push('统一用 `loops run` 触发，不要直接调底层命令：它负责去重、租约、回执。', '');
+  push('```cron');
+  push('0 8 * * *   npx habitat loops run daily-brief --mail --actor agent:your-name');
+  push('0 9 * * *   npx habitat loops run renew-due --actor agent:your-name');
+  push('```', '');
+
+  push('## 4. 怎么证明你干过活', '');
+  push('```bash');
+  push('npx habitat loops beat triage-inbox --ok --produced note-xxx,note-yyy --note "处理了 2 条"');
+  push('npx habitat loops beat reminders --fail --note "SMTP 超时"');
+  push('npx habitat loops status --json      # 你的回执会出现在 lastAt / lastBy');
+  push('```', '');
+  push('`produced` 为空会被当成「跑了但什么也没发生」，不要这么交账。', '');
+
+  push('## 5. 自检', '');
+  push('```bash');
+  push('npx habitat loops check      # down / late / 从未运行 / 无归属 / 重复执行');
+  push('```', '');
+  push('`down` 必须处理；`never` 先确认是刚部署还是根本没接；`double` 说明两个执行者撞车了，只留一个。', '');
+
+  push('## 6. 状态文件在哪（只读优先）', '');
+  push('| 文件 | 内容 |');
+  push('|---|---|');
+  push('| `.habitat/state/loop-runs.jsonl` | 回执，只追加；最后一行可能是半截，忽略即可 |');
+  push('| `.habitat/state/automation.json` | 启停、归属、harness 能力声明 |');
+  push('| `.habitat/state/loop-claims.json` | 认领（有 TTL，过期自动失效） |');
+  push('| `.habitat/state/loop-leases.json` | 执行租约（正常跑完会删掉） |', '');
+  push('> 需要写这些文件时优先用 CLI/API，不要手改：手改会绕过条件写和去重。', '');
+  return `${lines.join('\n')}\n`;
+}
+
 /** 参考手册：从目录生成，不手写 */
 export function renderManual(opts: { generatedAt: string; version?: string } = { generatedAt: '' }): string {
   const lines: string[] = [];
@@ -877,7 +955,7 @@ export function renderManual(opts: { generatedAt: string; version?: string } = {
   push('|---|---|---|');
   push('| 人 | `habitat loops status` | 只看 `down` / `blocked` / 积压最大的三条 |');
   push('| 平台 Agent | `GET /api/loops` | 按 `owner` 跑，跑完 `beat`，产物写进 `produced` |');
-  push('| 外部 harness | `habitat loops list --json` | `bind --harness profile.yaml` 看能接哪些，生成 cron，跑完 beat |', '');
+  push('| 外部 harness | `habitat loops list --json` | `bind --harness profile.yaml` 看能接哪些 → 生成 cron → `run` → `claim` → `beat` |', '');
 
   push('## 1. 状态怎么判', '');
   push('| 状态 | 含义 | 该做什么 |');
@@ -890,6 +968,15 @@ export function renderManual(opts: { generatedAt: string; version?: string } = {
   push('| `paused` | 被显式停用 | 确认是谁停的、为什么 |');
   push('| `manual` | 按需 / 事件型，不做存活判定 | 看 backlog |', '');
   push('`maxSilenceMinutes` 是容忍上限，默认按「两倍」判 down，留了一次漏跑的余量。', '');
+
+  push('### 1.1 租约、认领与告警', '');
+  push('| 机制 | 解决什么 | 怎么用 |');
+  push('|---|---|---|');
+  push('| 租约 | 平台定时器和外部 cron 同时到点，只让一个真正执行 | 自动；`habitat loops leases` 看谁在执行 |');
+  push('| 认领 | 两个 agent 不重复处理同一条工单 | `loops claim <id> <target>`；`beat` 自动释放 |');
+  push('| 告警 | down 不再只靠人打开页面 | 服务每 10 分钟检查；`loops alerts` 手动推一次 |', '');
+  push('租约默认 10 分钟（`HABITAT_LOOP_LEASE_MIN`），认领默认 120 分钟（`HABITAT_CLAIM_MIN`）。');
+  push('进程崩了不会留死锁：租约/认领都有过期时间，过期后可被接管。', '');
 
   const families: LoopFamily[] = ['maintain', 'digest', 'decide', 'deliver'];
   const familyIntro: Record<LoopFamily, string> = {
@@ -953,8 +1040,9 @@ export function renderManual(opts: { generatedAt: string; version?: string } = {
   push('3. **重复跑会怎样？** 每条闭环的「幂等」一栏写了答案；写不出来的不允许接。');
   push('4. **产物写在哪？** 产物必须是可指认的 id，不是「我改好了」。');
   push('5. **怎么证明它跑过？** 跑完必须 `habitat loops beat <id> --ok --produced …`；没有回执等于没跑。');
-  push('6. **失败了谁接手？** 连续失败三次就停下来通知人，不要无限重试。');
-  push('7. **它不能做什么？** 判断类闭环只许提案，不许 commit；外发类必须先过人。', '');
+  push('6. **会不会和别人抢同一条？** 判断类先 `claim`；确定性任务靠租约，不用你操心。');
+  push('7. **失败了谁接手？** 连续失败三次就停下来通知人，不要无限重试。');
+  push('8. **它不能做什么？** 判断类闭环只许提案，不许 commit；外发类必须先过人。', '');
 
   push('### 一个最小可用的 cron 组合', '');
   push('```cron');
@@ -976,7 +1064,7 @@ export function renderManual(opts: { generatedAt: string; version?: string } = {
   push('| 现象 | 先查 | 常见原因 |');
   push('|---|---|---|');
   push('| `down` 但进程活着 | `habitat loops status --json` 的 `lastAt` | 定时器被 `HABITAT_*_MS=0` 关了；或 harness 的 cron 被删了 |');
-  push('| 两个执行器都跑了 | `loop-runs.jsonl` 里同一窗口两条 `ok` | 没有租约：只保留一个 owner，另一个改成 `--dry-run` |');
+  push('| 两个执行器都跑了 | `habitat loops leases` + `loop-runs.jsonl` | 租约应该拦住；若确实双跑，检查两边是否用了不同的空间根 |');
   push('| 跑完没有产物 | 回执的 `produced` 为空 | 闭环只做了「扫描」，没做「落盘」；回到步骤表看断在哪一步 |');
   push('| `blocked` 一直是邮件 | `habitat notify` 看缺哪个字段 | 没配 SMTP；补配置或把闭环标成 paused |');
   push('| 回执很多但没人看 | `backlog` 持续变大 | 闭环在「生产」，但没有人消费产物——这比不跑更糟 |', '');
@@ -985,6 +1073,7 @@ export function renderManual(opts: { generatedAt: string; version?: string } = {
   push('1. 改 `shared/loops.ts` 里的目录（新增 / 删除 / 改字段）。');
   push('2. `npm run test:unit`：契约测试会检查每条闭环都有入口、证据、幂等、降级。');
   push('3. `habitat loops manual --out docs/automation-manual.md` 重新生成。');
+  push('4. 空间级操作手册：`habitat loops init` 在空间根写 `AGENTS.md`（外部 harness 的入口）。');
   push('4. 手册与代码在同一个 commit 里，评审时一起看。', '');
   push('> 反模式：直接手改这份 Markdown。下一次生成就会覆盖，且没人知道哪份是真的。');
 

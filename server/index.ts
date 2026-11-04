@@ -28,7 +28,7 @@ import {
 import { runRules } from './core/rules.ts';
 import { runReminders } from './core/reminders.ts';
 import { sendDailyBrief, runTidy } from './core/tidy.ts';
-import { appendReceipt } from './core/loops.ts';
+import { appendReceipt, runLoopAlerts } from './core/loops.ts';
 import { nowISO } from '../shared/id.ts';
 
 export const DEFAULT_ROOT = process.env.HABITAT_SPACE ?? path.resolve('space');
@@ -293,6 +293,24 @@ export async function start(rootArg?: string) {
   }, 600_000);
   briefTimer.unref?.();
 
+  // 闭环告警：down 不能只靠人打开页面才发现。每 10 分钟看一次，
+  // 同一闭环每天最多一条（Notifier 去重）；HABITAT_LOOP_ALERT_MAIL=1 时同时发信。
+  const alertMs = Number(process.env.HABITAT_LOOP_ALERT_MS ?? 600000);
+  const alertOnce = () => {
+    if (writes > 0) return;
+    void runLoopAlerts(app.habitat, { mail: process.env.HABITAT_LOOP_ALERT_MAIL === '1' })
+      .then((r) => {
+        if (r.alerted.length) console.log(`[habitat] 闭环告警 ${r.alerted.length} 条：${r.alerted.map((x) => x.id).join('、')}`);
+        if (r.mailError) console.warn(`[habitat] 闭环告警邮件失败：${r.mailError}`);
+      })
+      .catch((e) => console.warn(`[habitat] 闭环告警出错：${(e as Error).message}`));
+  };
+  const alertTimer = alertMs > 0 ? setInterval(alertOnce, alertMs) : undefined;
+  alertTimer?.unref?.();
+  // 启动 30 秒后先看一次：上次进程如果是崩的，down 状态应该马上被看见
+  const alertBoot = alertMs > 0 ? setTimeout(alertOnce, 30_000) : undefined;
+  alertBoot?.unref?.();
+
   const watchMs = Number(process.env.HABITAT_WATCH_MS ?? 15000);
   const watcher = watchMs > 0
     ? setInterval(() => {
@@ -317,6 +335,8 @@ export async function start(rootArg?: string) {
       if (remindTimer) clearInterval(remindTimer);
       if (briefTimer) clearInterval(briefTimer);
       if (tidyTimer) clearInterval(tidyTimer);
+      if (alertTimer) clearInterval(alertTimer);
+      if (alertBoot) clearTimeout(alertBoot);
       app.habitat.close();
       console.log(`[habitat] 已收到 ${sig}，连接已关闭`);
     } catch (e) {

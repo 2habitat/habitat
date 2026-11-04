@@ -9,7 +9,7 @@ export type RouteId =
   | 'today' | 'inbox' | 'calendar' | 'projects' | 'areas' | 'review'
   | 'shelf' | 'continue' | 'compose' | 'reader' | 'editor'
   | 'search' | 'tags' | 'collections' | 'graph'
-  | 'assistant' | 'changes' | 'jobs' | 'automation'
+  | 'assistant' | 'changes' | 'jobs' | 'automation' | 'loops'
   | 'storage' | 'agent' | 'budget' | 'files' | 'channels' | 'health' | 'account';
 
 export const ROUTES: { id: RouteId; path: string; group: string; title: string; icon: IconName }[] = [
@@ -35,6 +35,7 @@ export const ROUTES: { id: RouteId; path: string; group: string; title: string; 
   { id: 'changes', path: '/changes', group: 'AI', title: '变更', icon: 'changes' },
   { id: 'jobs', path: '/jobs', group: 'AI', title: '作业', icon: 'jobs' },
   { id: 'automation', path: '/automation', group: 'AI', title: '自动化', icon: 'automation' },
+  { id: 'loops', path: '/loops', group: 'AI', title: '闭环', icon: 'automation' },
 
   { id: 'storage', path: '/storage', group: '系统', title: '空间与存储', icon: 'storage' },
   { id: 'account', path: '/account', group: '系统', title: '账号与登录', icon: 'account' },

@@ -16,6 +16,7 @@ import { ReaderPage } from '../domains/reading/Reader.tsx';
 import { EditorPage } from '../domains/editing/Editor.tsx';
 import { SearchPage, TagsPage, CollectionsPage, GraphPage } from '../domains/connect/pages.tsx';
 import { AssistantPage, ChangesPage, JobsPage, AutomationPage } from '../domains/ai/pages.tsx';
+import { LoopsPage } from '../domains/ai/LoopsPage.tsx';
 import { ChannelsPage, StoragePage, AgentPage, BudgetPage, HealthPage } from '../domains/system/pages.tsx';
 import { FilesPage } from '../domains/system/FilesPage.tsx';
 import { AccountPage } from '../domains/system/AccountPage.tsx';
@@ -260,6 +261,7 @@ function Page({ id, params }: { id: ReturnType<typeof useLocation>['id']; params
     case 'changes': return <ChangesPage />;
     case 'jobs': return <JobsPage />;
     case 'automation': return <AutomationPage />;
+    case 'loops': return <LoopsPage />;
 
     case 'storage': return <StoragePage />;
     case 'account': return <AccountPage />;

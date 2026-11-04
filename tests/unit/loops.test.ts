@@ -10,13 +10,16 @@ import path from 'node:path';
 import { Habitat } from '../../server/core/space.ts';
 import { makeSpace, rmSpace } from '../helpers/space.ts';
 import {
-  LOOPS, loopById, evaluateLoop, cronOf, fitLoop, renderManual,
+  LOOPS, loopById, evaluateLoop, cronOf, fitLoop, renderManual, renderSpaceGuide,
   type HarnessProfile, type LoopReceipt,
 } from '../../shared/loops.ts';
 import {
   appendReceipt, readReceipts, latestByLoop, runLoop, beat, checkAutomation, computeStatuses,
   agentBrief, LOOP_RUNS, AUTOMATION_CONFIG, loadAutomation, saveAutomation,
+  acquireLease, claimTarget, releaseClaims, listClaims, runLoopAlerts,
 } from '../../server/core/loops.ts';
+import { buildServer } from '../../server/index.ts';
+import { N1 } from '../helpers/space.ts';
 
 let dir: string;
 let hab: Habitat;
@@ -80,6 +83,21 @@ describe('闭环目录：写不全就不许存在', () => {
     for (const d of LOOPS) {
       if (d.entry.cli) expect(d.entry.cli.startsWith('habitat '), `${d.id} CLI 入口格式不对`).toBe(true);
       if (d.entry.api) expect(/^(GET|POST|PUT|PATCH|DELETE) \/api\//.test(d.entry.api), `${d.id} API 入口格式不对`).toBe(true);
+    }
+  });
+
+  it('CLI 入口必须是单条可执行命令，不能是命令序列', () => {
+    for (const d of LOOPS) {
+      if (!d.entry.cli) continue;
+      expect(d.entry.cli, `${d.id} 的 CLI 入口混进了说明文字`).not.toContain('·');
+      expect(d.entry.cli, `${d.id} 的 CLI 入口混进了箭头`).not.toContain('→');
+      expect(d.entry.cli, `${d.id} 的 CLI 入口混进了括号说明`).not.toContain('（');
+    }
+  });
+
+  it('harness 参数必须以 -- 开头', () => {
+    for (const d of LOOPS) {
+      if (d.harnessArgs) expect(d.harnessArgs.trim().startsWith('--'), `${d.id} harnessArgs 不合法`).toBe(true);
     }
   });
 
@@ -271,4 +289,139 @@ describe('配置：归属与启停', () => {
   });
 });
 
+
+/* ---------------- P1：租约 / 认领 / 告警 / 作业回执 ---------------- */
+
+describe('租约：同一时刻只有一个执行者', () => {
+  it('第二个执行者拿不到；释放后可以接', async () => {
+    const a = await acquireLease(hab, 'daily-brief', 'agent:a');
+    expect(a.ok).toBe(true);
+    const b = await acquireLease(hab, 'daily-brief', 'agent:b');
+    expect(b.ok).toBe(false);
+    if (b.ok === false) expect(b.holder?.owner).toBe('agent:a');
+    if (a.ok) await a.release();
+    const c = await acquireLease(hab, 'daily-brief', 'agent:b');
+    expect(c.ok).toBe(true);
+    if (c.ok) await c.release();
+  });
+
+  it('过期的租约可以被接管', async () => {
+    await hab.store.adapter.write(
+      '.habitat/state/loop-leases.json',
+      JSON.stringify({ 'daily-brief': { owner: 'agent:dead', at: '2026-11-01T00:00:00+08:00', until: '2026-11-01T00:10:00+08:00', token: 'x' } }),
+      { backup: false },
+    );
+    const r = await acquireLease(hab, 'daily-brief', 'agent:new');
+    expect(r.ok).toBe(true);
+    if (r.ok) await r.release();
+  });
+
+  it('同一个 owner 可以重入（不会把自己锁死）', async () => {
+    const a = await acquireLease(hab, 'rules', 'agent:a');
+    expect(a.ok).toBe(true);
+    const b = await acquireLease(hab, 'rules', 'agent:a');
+    expect(b.ok).toBe(true);
+    if (a.ok) await a.release();
+    if (b.ok) await b.release();
+  });
+});
+
+describe('认领：两个 agent 不重复做同一条', () => {
+  it('先到先得；别人的工单里看不到已被认领的条目', async () => {
+    const item = hab.inbox()[0];
+    expect(item, '夹具里应该有收件箱条目').toBeTruthy();
+    const r1 = await claimTarget(hab, 'triage-inbox', item.id, 'agent:a');
+    expect(r1.ok).toBe(true);
+    const r2 = await claimTarget(hab, 'triage-inbox', item.id, 'agent:b');
+    expect(r2.ok).toBe(false);
+
+    const a = await runLoop(hab, 'triage-inbox', { actor: 'agent:a' });
+    expect(a.output).toContain(item.id);
+    const b = await runLoop(hab, 'triage-inbox', { actor: 'agent:b' });
+    expect(b.output).not.toContain(item.id);
+    expect(b.output).toContain('已被其他执行者认领');
+  });
+
+  it('beat 交账时自动释放自己名下的认领', async () => {
+    const item = hab.inbox()[0];
+    await claimTarget(hab, 'triage-inbox', item.id, 'agent:a');
+    expect((await listClaims(hab, 'triage-inbox')).length).toBe(1);
+    await beat(hab, 'triage-inbox', { ok: true, actor: 'agent:a', produced: [item.id] });
+    expect((await listClaims(hab, 'triage-inbox')).length).toBe(0);
+  });
+
+  it('release 只释放指定执行者的', async () => {
+    const item = hab.inbox()[0];
+    await claimTarget(hab, 'triage-inbox', item.id, 'agent:a');
+    await claimTarget(hab, 'triage-inbox', item.id, 'agent:a');
+    await releaseClaims(hab, 'triage-inbox', 'agent:b');
+    expect((await listClaims(hab, 'triage-inbox')).length).toBe(1);
+    await releaseClaims(hab, 'triage-inbox', 'agent:a');
+    expect((await listClaims(hab, 'triage-inbox')).length).toBe(0);
+  });
+});
+
+describe('告警：down 会被推一次，不重复轰炸', () => {
+  it('失败回执 → 告警；同一天第二次跳过', async () => {
+    await beat(hab, 'daily-brief', { ok: false, note: 'SMTP 超时', actor: 'agent:x' });
+    const r = await runLoopAlerts(hab);
+    expect(r.alerted.map((x) => x.id)).toContain('daily-brief');
+    const again = await runLoopAlerts(hab);
+    expect(again.alerted.map((x) => x.id)).not.toContain('daily-brief');
+    expect(again.skipped.join(' ')).toContain('今天已告警');
+  });
+});
+
+describe('空间操作手册', () => {
+  it('外部 harness 能看到三条硬规矩与交账方式', () => {
+    const md = renderSpaceGuide({ space: '测试空间', generatedAt: '2026-11-04T12:00:00+08:00' });
+    expect(md).toContain('不要直接改文件');
+    expect(md).toContain('跑完必须交账');
+    expect(md).toContain('loops claim');
+    expect(md).toContain('loops beat');
+  });
+});
+
+describe('作业与提案纳入统一回执', () => {
+  it('作业完成后写 job-advance 回执', async () => {
+    const d = await makeSpace();
+    const app = await buildServer({ root: d, authMode: 'off' });
+    try {
+      const created = await app.inject({ method: 'POST', url: '/api/jobs', payload: { name: '测试作业', steps: ['一', '二', '三'] } });
+      const job = (JSON.parse(created.body) as { job: { id: string } }).job;
+      for (const payload of [{}, {}, { approve: true }, {}]) {
+        await app.inject({ method: 'POST', url: `/api/jobs/${job.id}/advance`, payload });
+      }
+      const receipts = await readReceipts(app.habitat);
+      expect(receipts.some((r) => r.loop === 'job-advance' && r.result === 'ok' && r.produced?.includes(job.id))).toBe(true);
+    } finally {
+      await app.close();
+      app.habitat.close();
+      await rmSpace(d);
+    }
+  });
+
+  it('提案应用后写 proposal-approve 回执', async () => {
+    const d = await makeSpace();
+    const app = await buildServer({ root: d, authMode: 'off' });
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/proposals',
+        payload: { title: '测试提案', ops: [{ t: 'update', id: N1, patch: { status: 'evergreen' } }] },
+      });
+      const prop = (JSON.parse(created.body) as { proposal: { id: string } }).proposal;
+      const applied = await app.inject({ method: 'POST', url: `/api/proposals/${prop.id}/apply` });
+      expect(applied.statusCode).toBe(200);
+      const receipts = await readReceipts(app.habitat);
+      expect(receipts.some((r) => r.loop === 'proposal-approve' && r.result === 'ok' && r.produced?.includes(prop.id))).toBe(true);
+    } finally {
+      await app.close();
+      app.habitat.close();
+      await rmSpace(d);
+    }
+  });
+});
+
 void path;
+

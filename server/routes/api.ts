@@ -28,9 +28,10 @@ import { listDir, preview, moveFile, makeDir, archiveFiles } from '../core/fs.ts
 import { loadRules, saveRules, normalizeRule, runRules } from '../core/rules.ts';
 import {
   computeStatuses, runLoop, beat, loadAutomation, saveAutomation, checkAutomation,
-  conformance, agentBrief, readReceipts, latestByLoop,
+  conformance, agentBrief, readReceipts, latestByLoop, appendReceipt,
+  claimTarget, releaseClaims, listClaims, listLeases, runLoopAlerts,
 } from '../core/loops.ts';
-import { LOOPS, loopById, renderManual, type HarnessProfile } from '../../shared/loops.ts';
+import { LOOPS, loopById, renderManual, renderSpaceGuide, type HarnessProfile } from '../../shared/loops.ts';
 
 export interface ApiOpts {
   root: string;
@@ -749,6 +750,16 @@ function asBuffer(body: unknown): Buffer | null {
     if (!r.ok) return reply.code(409).send({ ok: false, conflict: r.conflict });
     lines[idx] = JSON.stringify({ ...p, state: 'applied' });
     await hab.store.adapter.write(STATE.proposals, `${lines.join('\n')}\n`, { backup: false });
+    // 提案应用 = 这条闭环真正闭合了一次：写回执，让「谁确认的、改出了什么」进统一时间线。
+    await appendReceipt(hab, {
+      loop: 'proposal-approve',
+      at: nowISO(),
+      by: String(actorOf(req.body, req.headers)),
+      trigger: 'event',
+      result: 'ok',
+      produced: [p.id, (r.changeset as { id?: string })?.id].filter((x): x is string => !!x),
+      note: '提案已应用',
+    });
     return { ok: true, changeset: r.changeset, events: r.events };
   });
 
@@ -897,6 +908,17 @@ function asBuffer(body: unknown): Buffer | null {
       summary: `作业 ${j.name} → ${next.state}（检查点 ${next.checkpoint}）`,
       payload: { idempotencyKey: j.idempotencyKey },
     });
+    if (next.state === 'done') {
+      await appendReceipt(hab, {
+        loop: 'job-advance',
+        at: nowISO(),
+        by: 'system',
+        trigger: 'event',
+        result: 'ok',
+        produced: [j.id],
+        note: `作业完成：${j.name}`,
+      });
+    }
     return { ok: true, job: updated };
   });
 
@@ -927,6 +949,15 @@ function asBuffer(body: unknown): Buffer | null {
       payload: { reason: j.lastError, nextTryAt: j.nextTryAt },
     });
     if (permanent) {
+      await appendReceipt(hab, {
+        loop: 'job-advance',
+        at: nowISO(),
+        by: 'system',
+        trigger: 'event',
+        result: 'fail',
+        produced: [id],
+        note: `连续失败 ${attempts} 次：${j.lastError ?? '未写原因'}`,
+      });
       await new Notifier(hab.store).add({
         level: 'danger',
         title: `作业「${j.name}」连续失败 ${attempts} 次`,
@@ -1208,7 +1239,7 @@ function asBuffer(body: unknown): Buffer | null {
 
   /* ---------------- 自动化闭环 ---------------- */
 
-  app.get('/api/loops', async () => computeStatuses(hab));
+  app.get('/api/loops', async () => ({ ...(await computeStatuses(hab)), loops: LOOPS }));
 
   app.get('/api/loops/check', async () => checkAutomation(hab));
 
@@ -1225,9 +1256,28 @@ function asBuffer(body: unknown): Buffer | null {
     reply.type('text/markdown; charset=utf-8').send(renderManual({ generatedAt: nowISO() })),
   );
 
+  /** 空间级操作手册：和 `habitat loops init` 写到空间根的是同一份内容 */
+  app.get('/api/loops/guide', async (_req, reply) =>
+    reply.type('text/markdown; charset=utf-8').send(
+      renderSpaceGuide({ space: hab.store.space.name || hab.store.root, generatedAt: nowISO() }),
+    ),
+  );
+
   app.post('/api/loops/conformance', async (req) => {
     const b = (req.body ?? {}) as { harness?: HarnessProfile };
     return conformance(hab, b.harness);
+  });
+
+  app.get('/api/loops/leases', async () => ({ leases: await listLeases(hab) }));
+
+  app.get('/api/loops/claims', async (req) => {
+    const q = (req.query ?? {}) as { loop?: string };
+    return { claims: await listClaims(hab, q.loop) };
+  });
+
+  app.post('/api/loops/alerts', async (req) => {
+    const b = (req.body ?? {}) as { mail?: boolean };
+    return { ok: true, report: await runLoopAlerts(hab, { mail: b.mail === true }) };
   });
 
   app.get('/api/loops/:id', async (req, reply) => {
@@ -1239,6 +1289,7 @@ function asBuffer(body: unknown): Buffer | null {
     return {
       loop: def,
       status: status.states.find((s) => s.id === id),
+      claims: (await listClaims(hab, id)),
       recent: receipts.filter((r) => r.loop === id).slice(-10).reverse(),
     };
   });
@@ -1260,6 +1311,23 @@ function asBuffer(body: unknown): Buffer | null {
     const actor = actorOf(b, req.headers);
     const r = await runLoop(hab, id, { ...b, actor });
     return reply.code(r.result === 'fail' ? 500 : 200).send({ ok: r.result !== 'fail', ...r });
+  });
+
+  app.post('/api/loops/:id/claim', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!loopById(id)) return reply.code(404).send({ error: `没有这条闭环：${id}` });
+    const b = (req.body ?? {}) as { target?: string; ttlMin?: number };
+    if (!b.target) return reply.code(400).send({ error: 'target 不能为空（对象 id 或断链目标）' });
+    const by = String(actorOf(b, req.headers));
+    const r = await claimTarget(hab, id, b.target, by, b.ttlMin);
+    return (r.ok ? reply.code(201) : reply.code(409)).send({ ...r });
+  });
+
+  app.post('/api/loops/:id/release', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = (req.body ?? {}) as { by?: string };
+    const n = await releaseClaims(hab, id, b.by);
+    return { ok: true, released: n };
   });
 
   app.post('/api/loops/:id/beat', async (req, reply) => {
@@ -1296,7 +1364,7 @@ export function buildManifest(hab: Habitat): {
   space: string;
   generatedAt: string;
   capabilities: Capability[];
-  automation: { list: string; check: string; manual: string; run: string; beat: string };
+  automation: { list: string; check: string; manual: string; guide: string; run: string; beat: string };
   loops: { id: string; name: string; mode: string; autonomy: string; trigger: string; requires: string[]; entry: { cli?: string; api?: string; mcp?: string; ui?: string; command?: string }; backlog?: string }[];
 } {
   const root = hab.store.root;
@@ -1307,6 +1375,7 @@ export function buildManifest(hab: Habitat): {
       list: 'GET /api/loops',
       check: 'GET /api/loops/check',
       manual: 'GET /api/loops/manual',
+      guide: 'GET /api/loops/guide',
       run: 'POST /api/loops/:id/run {dryRun, force}',
       beat: 'POST /api/loops/:id/beat {ok, note, produced[]}',
     },

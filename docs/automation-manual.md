@@ -2,7 +2,7 @@
 
 > 这份手册由 `habitat loops manual` 从闭环目录生成。不要手改；改 `shared/loops.ts` 后重新生成。
 
-生成时间：2026-11-04T14:34:45+08:00
+生成时间：2026-11-04T15:13:04+08:00
 
 ## 0. 先读这一页
 
@@ -15,7 +15,7 @@
 |---|---|---|
 | 人 | `habitat loops status` | 只看 `down` / `blocked` / 积压最大的三条 |
 | 平台 Agent | `GET /api/loops` | 按 `owner` 跑，跑完 `beat`，产物写进 `produced` |
-| 外部 harness | `habitat loops list --json` | `bind --harness profile.yaml` 看能接哪些，生成 cron，跑完 beat |
+| 外部 harness | `habitat loops list --json` | `bind --harness profile.yaml` 看能接哪些 → 生成 cron → `run` → `claim` → `beat` |
 
 ## 1. 状态怎么判
 
@@ -30,6 +30,17 @@
 | `manual` | 按需 / 事件型，不做存活判定 | 看 backlog |
 
 `maxSilenceMinutes` 是容忍上限，默认按「两倍」判 down，留了一次漏跑的余量。
+
+### 1.1 租约、认领与告警
+
+| 机制 | 解决什么 | 怎么用 |
+|---|---|---|
+| 租约 | 平台定时器和外部 cron 同时到点，只让一个真正执行 | 自动；`habitat loops leases` 看谁在执行 |
+| 认领 | 两个 agent 不重复处理同一条工单 | `loops claim <id> <target>`；`beat` 自动释放 |
+| 告警 | down 不再只靠人打开页面 | 服务每 10 分钟检查；`loops alerts` 手动推一次 |
+
+租约默认 10 分钟（`HABITAT_LOOP_LEASE_MIN`），认领默认 120 分钟（`HABITAT_CLAIM_MIN`）。
+进程崩了不会留死锁：租约/认领都有过期时间，过期后可被接管。
 
 ## 2.1 维持（7 条）
 
@@ -48,6 +59,8 @@
 
 **入口**：`habitat reindex` ｜ `POST /api/system/rescan` ｜ UI：系统 · 健康恢复
 
+**接管**：仅进程内，外部 harness 不需要接管
+
 **步骤**：
 1. 比对 (mtime,size) 指纹
 2. 只重解析变过的文件
@@ -65,7 +78,7 @@
 
 **默认归属**：平台进程
 
-> 这是 level-triggered 的典型：漏掉一轮没关系，下一轮看的是当前状态。
+> 这是 level-triggered 的典型：漏掉一轮没关系，下一轮看的是当前状态。外部 harness 不需要接管它——起服务就够了。
 
 
 ### 2. `reconcile` 对账
@@ -74,7 +87,7 @@
 
 | 项 | 值 |
 |---|---|
-| 触发 | 事件：人工 / harness 触发，建议每日一次 |
+| 触发 | 每天 03:30 |
 | 模式 | 自动 · 自主度 可写派生 |
 | 执行者 | 服务端 / 外部 harness / 人 |
 | 存活上限 | 2 天 |
@@ -105,7 +118,7 @@
 
 | 项 | 值 |
 |---|---|
-| 触发 | 每天 03:00 |
+| 触发 | 每 6 小时 |
 | 模式 | 自动 · 自主度 可落盘 |
 | 执行者 | 服务端 / 外部 harness |
 | 存活上限 | 2 天 |
@@ -143,6 +156,8 @@
 | 存活上限 | 1.5 天 |
 
 **入口**：`habitat brief` ｜ `GET /api/maintenance/brief` ｜ UI：今天页
+
+**harness 定时**：`habitat loops run daily-brief --mail`
 
 **步骤**：
 1. 收集今天的日程与到期任务
@@ -277,7 +292,7 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 | 存活上限 | 3 天 |
 | 积压指标 | 收件箱条数 |
 
-**入口**：`habitat next / habitat list --what inbox` ｜ `GET /api/inbox · GET /api/lifecycle` ｜ UI：收件箱
+**入口**：`habitat next` ｜ `GET /api/inbox · GET /api/lifecycle` ｜ UI：收件箱
 
 **步骤**：
 1. 读收件箱条目与标签分布
@@ -413,7 +428,7 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 | 存活上限 | 2 天 |
 | 积压指标 | 到期复核数 |
 
-**入口**：`habitat due · habitat renew <id>` ｜ `GET /api/renew/:id` ｜ UI：复盘
+**入口**：`habitat due` ｜ `GET /api/renew/:id` ｜ UI：复盘
 
 **步骤**：
 1. 按间隔阶梯算到期
@@ -447,7 +462,7 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 | 执行者 | 人 / 平台 Agent |
 | 存活上限 | 不做存活判定 |
 
-**入口**：`habitat review <id> --ok|--stale` ｜ `POST /api/review/:id` ｜ UI：复盘
+**入口**：`habitat review <id> --ok` ｜ `POST /api/review/:id` ｜ UI：复盘
 
 **步骤**：
 1. 读当前档位
@@ -481,7 +496,7 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 | 执行者 | 平台 Agent / 外部 harness / 人 |
 | 存活上限 | 不做存活判定 |
 
-**入口**：`habitat renew <id> → habitat propose --ops …` ｜ `POST /api/proposals` ｜ UI：变更
+**入口**：`habitat renew <id>` ｜ `POST /api/proposals` ｜ UI：变更
 
 **步骤**：
 1. 读证据包
@@ -516,7 +531,7 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 | 存活上限 | 不做存活判定 |
 | 积压指标 | 待确认提案数 |
 
-**入口**：`habitat propose --ops … --commit（信任边界，见下）` ｜ `POST /api/proposals/:id/apply` ｜ UI：变更
+**入口**：`habitat propose --ops …` ｜ `POST /api/proposals/:id/apply` ｜ UI：变更
 
 **步骤**：
 1. propose（带 base / inverse / 事件）
@@ -591,6 +606,8 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 
 **入口**：`habitat inbox-mail --fetch` ｜ `POST /api/inbox/mail` ｜ UI：收件箱 · 收信
 
+**harness 定时**：`habitat loops run mail-ingest --fetch`
+
 **步骤**：
 1. IMAP 拉取未读
 2. 按 allowFrom 过滤
@@ -621,7 +638,9 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 | 执行者 | 外部 harness / 人 |
 | 存活上限 | 7 天 |
 
-**入口**：`habitat export --out <目录> --verify`
+**入口**：`habitat export --out ~/habitat-backup --verify`
+
+**harness 定时**：`habitat loops run export-backup --out ~/habitat-backup`
 
 **步骤**：
 1. 原样复制文件与目录结构
@@ -686,32 +705,34 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 3. **重复跑会怎样？** 每条闭环的「幂等」一栏写了答案；写不出来的不允许接。
 4. **产物写在哪？** 产物必须是可指认的 id，不是「我改好了」。
 5. **怎么证明它跑过？** 跑完必须 `habitat loops beat <id> --ok --produced …`；没有回执等于没跑。
-6. **失败了谁接手？** 连续失败三次就停下来通知人，不要无限重试。
-7. **它不能做什么？** 判断类闭环只许提案，不许 commit；外发类必须先过人。
+6. **会不会和别人抢同一条？** 判断类先 `claim`；确定性任务靠租约，不用你操心。
+7. **失败了谁接手？** 连续失败三次就停下来通知人，不要无限重试。
+8. **它不能做什么？** 判断类闭环只许提案，不许 commit；外发类必须先过人。
 
 ### 一个最小可用的 cron 组合
 
 ```cron
 # 每 15 分钟：把外部改动收进索引 + 收一次邮件
 */15 * * * * cd /path/to/habitat && npx habitat loops run watch-external --actor agent:cron
-*/15 * * * * cd /path/to/habitat && npx habitat inbox-mail --fetch --actor agent:cron
+*/15 * * * * cd /path/to/habitat && npx habitat loops run mail-ingest --fetch --actor agent:cron
 
-# 每天 08:00：简报；09:00：翻新队列
-0 8 * * *  cd /path/to/habitat && npx habitat loops run daily-brief --actor agent:cron
+# 每天 08:00：简报（--mail 才会发信）；09:00：翻新队列
+0 8 * * *  cd /path/to/habitat && npx habitat loops run daily-brief --mail --actor agent:cron
 0 9 * * *  cd /path/to/habitat && npx habitat loops run renew-due --actor agent:cron
 
 # 每周日 04:00：导出校验
-0 4 * * 0  cd /path/to/habitat && npx habitat export --out /backup/habitat --verify
+0 4 * * 0  cd /path/to/habitat && npx habitat loops run export-backup --out ~/habitat-backup --actor agent:cron
 ```
 
-`--actor` 会写进回执，用来回答「这次是谁跑的」。没有它，回执只能记成 `agent:external`。
+统一走 `loops run`：它会去重、写回执；判断类会出工单而不是假装完成。
+`--actor` 会写进回执，用来回答「这次是谁跑的」。没有它，回执只能记成 `human`。
 
 ## 4. 故障排查
 
 | 现象 | 先查 | 常见原因 |
 |---|---|---|
 | `down` 但进程活着 | `habitat loops status --json` 的 `lastAt` | 定时器被 `HABITAT_*_MS=0` 关了；或 harness 的 cron 被删了 |
-| 两个执行器都跑了 | `loop-runs.jsonl` 里同一窗口两条 `ok` | 没有租约：只保留一个 owner，另一个改成 `--dry-run` |
+| 两个执行器都跑了 | `habitat loops leases` + `loop-runs.jsonl` | 租约应该拦住；若确实双跑，检查两边是否用了不同的空间根 |
 | 跑完没有产物 | 回执的 `produced` 为空 | 闭环只做了「扫描」，没做「落盘」；回到步骤表看断在哪一步 |
 | `blocked` 一直是邮件 | `habitat notify` 看缺哪个字段 | 没配 SMTP；补配置或把闭环标成 paused |
 | 回执很多但没人看 | `backlog` 持续变大 | 闭环在「生产」，但没有人消费产物——这比不跑更糟 |
@@ -721,6 +742,7 @@ AI 的「判断 / 提炼 / 连接」三个切入点。服务端只备料，判�
 1. 改 `shared/loops.ts` 里的目录（新增 / 删除 / 改字段）。
 2. `npm run test:unit`：契约测试会检查每条闭环都有入口、证据、幂等、降级。
 3. `habitat loops manual --out docs/automation-manual.md` 重新生成。
+4. 空间级操作手册：`habitat loops init` 在空间根写 `AGENTS.md`（外部 harness 的入口）。
 4. 手册与代码在同一个 commit 里，评审时一起看。
 
 > 反模式：直接手改这份 Markdown。下一次生成就会覆盖，且没人知道哪份是真的。

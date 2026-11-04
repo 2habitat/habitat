@@ -16,7 +16,10 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { Habitat } from './core/space.ts';
 import { touch, flush } from './core/usage.ts';
-import { computeStatuses, runLoop, beat, checkAutomation, agentBrief, renderStatuses } from './core/loops.ts';
+import {
+  computeStatuses, runLoop, beat, checkAutomation, agentBrief, renderStatuses,
+  claimTarget, releaseClaims, listLeases, runLoopAlerts,
+} from './core/loops.ts';
 import { LOOPS, loopById } from '../shared/loops.ts';
 
 interface RpcReq {
@@ -106,8 +109,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'status', 'show', 'check', 'brief'] },
-        id: { type: 'string', description: 'show 时必填' },
+        action: { type: 'string', enum: ['list', 'status', 'show', 'check', 'brief', 'claim', 'release', 'leases', 'alerts'] },
+        id: { type: 'string', description: 'show / claim / release 时必填（闭环 id）' },
+        target: { type: 'string', description: 'claim 时必填：对象 id 或断链目标' },
+        ttlMin: { type: 'number', description: 'claim 的过期时间，默认 120 分钟' },
       },
       additionalProperties: false,
     },
@@ -236,6 +241,26 @@ export async function runMcp(root: string, opts: { log?: (s: string) => void } =
           return text(`${r.passed ? '通过' : '未通过'}\n${JSON.stringify(r, null, 2)}`);
         }
         if (action === 'brief') return text(await agentBrief(hab));
+        if (action === 'claim') {
+          const id = String(args.id ?? '');
+          const target = String(args.target ?? '');
+          if (!id || !target) return text('claim 需要 id（闭环）和 target（对象 id）', true);
+          const r = await claimTarget(hab, id, target, 'agent:mcp', Number(args.ttlMin ?? 120));
+          if (!r.ok) return text(`已被 ${r.holder.by} 认领（到 ${r.holder.until}）`, true);
+          return text(`已认领 ${id} / ${target}。做完用 kb_loop_report 交账（会自动释放）。`);
+        }
+        if (action === 'release') {
+          const n = await releaseClaims(hab, String(args.id ?? ''), 'agent:mcp');
+          return text(`已释放 ${n} 条认领。`);
+        }
+        if (action === 'leases') {
+          const leases = await listLeases(hab);
+          return text(Object.keys(leases).length ? JSON.stringify(leases, null, 2) : '当前没有执行中的闭环。');
+        }
+        if (action === 'alerts') {
+          const r = await runLoopAlerts(hab);
+          return text(`已推 ${r.alerted.length} 条告警${r.skipped.length ? `，跳过 ${r.skipped.length} 条（今天已告警）` : ''}`);
+        }
         return text(renderStatuses(await computeStatuses(hab)));
       }
       case 'kb_loop_run': {

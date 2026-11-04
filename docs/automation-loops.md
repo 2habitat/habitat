@@ -13,7 +13,7 @@
 
 ### 1.1 机制不少，账本为零
 
-服务进程里有 5 个定时器（`server/index.ts:210` 规则、`:228` 提醒、`:252` 代谢、`:272` 简报、`:296` 外部改动轮询），
+服务进程里有 6 个定时器（`server/index.ts:210` 规则、`:228` 提醒、`:252` 代谢、`:272` 简报、`:296` 外部改动轮询、`:298` 闭环告警），
 加上 CLI、HTTP、MCP、UI 四个入口，能自动发生的事其实很多。
 
 但在本次改动之前，**没有任何地方记录「上一次跑是什么时候、结果如何、产出了什么」**。
@@ -155,7 +155,7 @@ README / lifecycle / architecture 三份文档各自描述「系统会做什么�
 
 UI 的「权限四档」（派生自动 / 授权内新增 / 改语义逐条确认 / 外部副作用禁止）
 写在 `src/domains/ai/pages.tsx` 的数组里，是给人看的文案。
-后端没有对应的策略对象，CLI 的 `propose --commit`（`server/cli.ts:543`）可以直接落盘。
+后端没有对应的策略对象，CLI 的 `propose --commit`（`server/cli.ts:549`）可以直接落盘。
 **后果**：同一个 agent，走 UI 要确认，走 CLI 不用。策略取决于路径，而不是身份。
 
 ### M8 入口不对称
@@ -411,7 +411,12 @@ GET  /api/loops/check           # 自检：down / never / 无归属 / 重复
 POST /api/loops/:id/run         # 跑（或拿工单）
 POST /api/loops/:id/beat        # 跑完交账
 POST /api/loops/:id/config      # 启停 / 改归属
-GET  /api/loops/manual          # 手册（Markdown）
+POST /api/loops/:id/claim       # 认领工单里的一条
+POST /api/loops/:id/release     # 归还
+GET  /api/loops/leases          # 谁在执行
+POST /api/loops/alerts          # 把 down 推一次通知
+GET  /api/loops/manual          # 19 条闭环手册（Markdown）
+GET  /api/loops/guide           # 空间级 AGENTS.md（给 harness 的操作手册）
 ```
 
 `GET /api/agent/manifest` 的返回里新增了 `automation` 与 `loops` 两个字段，
@@ -441,9 +446,11 @@ timezone: Asia/Shanghai
 YAML
 npx habitat loops bind --harness harness.yaml --cron
 
-# 3. 按输出的 crontab 配；每跑完一条必须交账
-npx habitat loops run daily-brief --actor agent:claude-code
-npx habitat loops beat daily-brief --ok --produced "" --note "已生成简报"
+# 3. 按输出的 crontab 配；判断类先认领，每跑完一条必须交账
+npx habitat loops run triage-inbox --actor agent:claude-code
+npx habitat loops claim triage-inbox note-xxx --actor agent:claude-code
+npx habitat loops beat triage-inbox --ok --produced note-xxx --actor agent:claude-code
+npx habitat loops beat daily-brief --ok --produced "" --note "已生成简报" --actor agent:claude-code
 
 # 4. 自检：谁静默了、谁没归属、谁被重复执行
 npx habitat loops check --json
@@ -480,14 +487,14 @@ npx habitat loops brief      # 一份「现在该做什么」的交接单
 | `server/routes/api.ts` | `/api/loops*` 全套 + manifest 增加 `automation/loops` |
 | `server/mcp.ts` | 新增 `kb_loops` / `kb_loop_run` / `kb_loop_report` |
 | `server/index.ts` | 四个定时器写回执；新增代谢定时器（补上 README 的承诺） |
-| `tests/unit/loops.test.ts` | 30 条契约测试：入口、证据、幂等、降级、红线 |
+| `tests/unit/loops.test.ts` | 42 条契约测试：入口、证据、幂等、降级、红线、租约、认领、告警 |
 | `docs/automation-manual.md` | 由目录生成的手册 |
 
 ### 验收命令
 
 ```bash
 npm run typecheck
-npm run test:unit                 # 117 条（新增 30 条）
+npm run test:unit                 # 129 条（新增 42 条）
 
 npx habitat loops status
 npx habitat loops check
@@ -499,25 +506,20 @@ npx habitat loops manual --out /tmp/manual.md
 
 ## 9. 路线（P1 / P2）与不做的事
 
-### P1（下一次迭代，仍然不引入新依赖）
+### P1（已落地，见 §12）
 
-1. **UI 闭环健康页**：现在只有 CLI/API，人看不见。加一页「自动化」子页，
-   复用 `/api/loops`，按状态分三组。
-2. **jobs / proposals 纳入目录**：现在它们是独立机制，回执只在各自的 jsonl 里。
-   把「作业推进」和「提案确认」也接上 `beat`，形成统一时间线。
-3. **跨进程租约**：当前只有去重窗口。多执行器场景需要 `leaseUntil` + 心跳续租，
-   否则窗口错开仍会双跑。
-4. **告警通道**：`down` 现在只能靠人看。接 `Notifier`（已有）或邮件，
-   同一条闭环每天最多告警一次。
-5. **claim（认领）**：agent 拿到工单后先 claim，避免两个 agent 做同一条。
-   claim 过期自动释放（比锁简单，比没有强）。
+1. ✅ **UI 闭环健康页**：`#/loops`，复用 `/api/loops`，按状态筛选，可跑/停/自检/看详情。
+2. ✅ **jobs / proposals 纳入目录**：作业完成/永久失败、提案应用后写回执，进统一时间线。
+3. ✅ **跨进程租约**：`loop-leases.json` + 条件写重试；默认 10 分钟，过期可接管。
+4. ✅ **告警通道**：down 推 `Notifier`，同一条每天一次；`HABITAT_LOOP_ALERT_MAIL=1` 同时发信。
+5. ✅ **claim（认领）**：工单条目先到先得，TTL 120 分钟；`beat` 自动释放。
 
 ### P2（有真实数据再说）
 
 1. 回执保留策略（现在只追加，长期会大）；
 2. 每条闭环的 SLO（成功率 / 平均耗时 / 产物转化率）；
 3. 多空间：一个进程管多个空间时，闭环归属怎么算；
-4. 把 `AGENTS.md` 作为 `loops brief` 的产物写进空间根。
+4. 告警升级（单条闭环连续 3 天 down → 升级到邮件/其它通道）。
 
 ### 明确不做
 
@@ -554,3 +556,31 @@ npx habitat loops manual --out /tmp/manual.md
 - [ ] `loops check` 在目标部署形态下通过（无 `down`、无重复执行）
 - [ ] `loops manual --out docs/automation-manual.md` 已重新生成，且与代码同一 commit
 - [ ] README / lifecycle / architecture 里新增的承诺，都能在目录里找到对应闭环
+
+
+## 12. P1 落地记录（2026-11）
+
+P1 的五项都做完了，但都刻意停在「够用」：没有引入 Redis、没有引入工作流引擎，
+仍然只有 JSON 文件和条件写。
+
+| 能力 | 实现 | 关键取舍 |
+|---|---|---|
+| 租约 | `.habitat/state/loop-leases.json`，`ifHash` 条件写 + 4 次重试 | 过期即接管，不做心跳续租；进程崩了最多锁 10 分钟 |
+| 认领 | `.habitat/state/loop-claims.json`，key = `loop:target` | TTL 120 分钟；`beat` 自动释放，不要求显式 release |
+| 告警 | `runLoopAlerts` + Notifier `ruleId=loop:<id>` | 只报 `down`，不报 `late/never`；每条每天一次 |
+| 作业回执 | 作业 `done` / 永久失败时写 `job-advance` | 中间状态不写，避免把「推进了一步」当成闭环闭合 |
+| 提案回执 | `apply` 成功后写 `proposal-approve` | 失败/冲突不写，避免污染成功率 |
+| UI | `#/loops`，30 秒轮询 | 只读 `/api/loops`，不引入新的状态源 |
+
+**为什么租约不做心跳续租**：单机 + 个人库，最长的闭环是导出（秒级）。
+10 分钟租约已经比任何一次执行长两个数量级；加心跳只会多一个需要维护的状态。
+真正需要长任务时，应该走 `jobs`（自带 checkpoint/退避），而不是把闭环执行拉长。
+
+**为什么认领不绑定到回执**：一个 agent 可能处理 10 条里的 3 条就退出。
+如果认领只在 `beat` 时释放，剩下 7 条会锁 120 分钟；所以 `run` 的工单会显示
+「已被他人认领 N 条」，并且 TTL 到期自动可接。
+
+**还没有做的**：
+- 租约的「续租」与「主动抢占」（目前只能等过期）；
+- 告警分级（`late` 是否该提醒，取决于这条闭环的重要程度，现在一律不提醒）；
+- 多空间下的租约命名空间（当前 key 只有 loop id，跨空间会撞，但一个进程只开一个空间）。

@@ -1,0 +1,27 @@
+# Habitat
+
+> 以文件为事实源的个人知识库与工作台。Markdown 可读可迁移，事件流可审计，SQLite 只做索引。
+> 自托管，可接任意 Agent harness。核心问题不是「怎么记」，是「记完之后谁维护、怎么证明它真的在维护」。
+
+## 给 Agent 的入口
+
+- [AGENTS.md](AGENTS.md)：改代码的 Agent 先读这个（命令、约束、闭环怎么加）。
+- [skills/habitat-automation/SKILL.md](skills/habitat-automation/SKILL.md)：操作知识空间的技能（看状态、接闭环、认领、交账、自检）。
+- 空间根目录的 `AGENTS.md`（由 `habitat loops init` 生成）：外部 harness 进入具体空间时先读。
+
+## 文档
+
+- [docs/architecture.md](docs/architecture.md)：文件/事件/索引三层，写入路径，并发与冲突。
+- [docs/automation-loops.md](docs/automation-loops.md)：自动化与 AI 闭环的失配分析、Loop Contract、调研与路线。
+- [docs/automation-manual.md](docs/automation-manual.md)：19 条闭环的逐条参考手册（生成，勿手改）。
+- [docs/lifecycle.md](docs/lifecycle.md)：生命周期、活性、翻新与 AI 的四个切入点。
+- [docs/workflow.md](docs/workflow.md)：开发与生产怎么分开，发布怎么做。
+- [docs/auth.md](docs/auth.md)：账号、会话、令牌与强制改密。
+
+## 最小的三条命令
+
+```bash
+npx habitat status          # 空间概览
+npx habitat loops status    # 闭环：谁该跑、跑没跑、积压多少
+npx habitat loops check     # 自检：down / never / 无归属 / 重复执行
+```

@@ -8,15 +8,20 @@
  *
  * 不在这里做的事：
  *   - 不替判断类闭环下结论（只准备工单）
- *   - 不做跨进程强租约（P1；当前用回执去重窗口 + 幂等实现兜底）
+ *
+ * P1 补上的三件事：
+ *   - 跨进程租约：平台定时器与外部 cron 撞车时，只有一个能真正执行
+ *   - 认领（claim）：判断类工单里的条目可以被某个 agent 先占住，避免重复劳动
+ *   - 告警：down 不再只靠人看，落到 Notifier（可选邮件）
  */
 import type { Habitat } from './space.ts';
-import { nowISO } from '../../shared/id.ts';
+import { newId, nowISO } from '../../shared/id.ts';
+import { ConflictError } from './storage.ts';
 import {
   LOOPS, loopById, evaluateLoop, fitAll, summarizeStates,
   type HarnessFit, type HarnessProfile, type LoopDef, type LoopReceipt, type LoopState,
 } from '../../shared/loops.ts';
-import { loadMailConfig } from './mailer.ts';
+import { loadMailConfig, sendMail } from './mailer.ts';
 import { collectBrief, renderBrief, runTidy } from './tidy.ts';
 import { runReminders } from './reminders.ts';
 import { runRules } from './rules.ts';
@@ -24,6 +29,7 @@ import { ingestMail } from './inbox-mail.ts';
 import { reviewQueue } from './renew.ts';
 import { lifeSnapshot, renderNext } from './lifecycle.ts';
 import { exportSpace, verifyExport } from './export.ts';
+import { Notifier } from './notify.ts';
 
 export const LOOP_RUNS = '.habitat/state/loop-runs.jsonl';
 export const AUTOMATION_CONFIG = '.habitat/state/automation.json';
@@ -41,11 +47,11 @@ export interface AutomationConfig {
   harness?: HarnessProfile;
 }
 
-const EMPTY_CONFIG: AutomationConfig = { version: 1, loops: {} };
-
 export async function loadAutomation(hab: Habitat): Promise<AutomationConfig> {
   const raw = await hab.store.adapter.read(AUTOMATION_CONFIG).catch(() => '');
-  if (!raw.trim()) return { ...EMPTY_CONFIG };
+  // 每次都要返回全新的 loops 对象：共用同一个默认对象的话，
+  // 某个调用方改一笔配置，会把「默认全开」污染成全局修改（测试里踩过）。
+  if (!raw.trim()) return { version: 1, loops: {} };
   try {
     const parsed = JSON.parse(raw) as Partial<AutomationConfig>;
     return {
@@ -54,7 +60,7 @@ export async function loadAutomation(hab: Habitat): Promise<AutomationConfig> {
       harness: parsed.harness,
     };
   } catch {
-    return { ...EMPTY_CONFIG };
+    return { version: 1, loops: {} };
   }
 }
 
@@ -88,6 +94,179 @@ export function latestByLoop(receipts: LoopReceipt[]): Record<string, LoopReceip
 
 export async function appendReceipt(hab: Habitat, r: LoopReceipt): Promise<void> {
   await hab.store.adapter.append(LOOP_RUNS, JSON.stringify(r));
+}
+
+/* ---------------- 租约：同一时刻只有一个执行者 ---------------- */
+
+export const LOOP_LEASES = '.habitat/state/loop-leases.json';
+export const LOOP_CLAIMS = '.habitat/state/loop-claims.json';
+
+export interface LoopLease {
+  owner: string;
+  at: string;
+  until: string;
+  token: string;
+}
+
+export interface LoopClaim {
+  loop: string;
+  /** 对象 id，或断链目标这类字符串 */
+  target: string;
+  by: string;
+  at: string;
+  until: string;
+  note?: string;
+}
+
+type LeaseMap = Record<string, LoopLease>;
+type ClaimMap = Record<string, LoopClaim>;
+
+async function readMap<T>(hab: Habitat, rel: string): Promise<T> {
+  const raw = await hab.store.adapter.read(rel).catch(() => '');
+  try {
+    return (raw.trim() ? JSON.parse(raw) : {}) as T;
+  } catch {
+    return {} as T;
+  }
+}
+
+/**
+ * 条件写重试循环：读当前哈希 → 算新值 → 带 ifHash 写。
+ * 两个进程同时改时，后写的会拿到 ConflictError，重读一次就能看到对方的决定。
+ */
+async function writeMap<T>(hab: Habitat, rel: string, fn: (cur: T) => T): Promise<void> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const st = await hab.store.adapter.stat(rel).catch(() => null);
+    const cur = await readMap<T>(hab, rel);
+    const next = fn(cur);
+    try {
+      await hab.store.adapter.write(rel, `${JSON.stringify(next, null, 2)}
+`, {
+        ifHash: st ? st.hash : 'new',
+        backup: false,
+      });
+      return;
+    } catch (e) {
+      if (e instanceof ConflictError) continue;
+      throw e;
+    }
+  }
+  throw new Error(`并发写入冲突：${rel}`);
+}
+
+export async function acquireLease(
+  hab: Habitat,
+  loop: string,
+  owner: string,
+  ttlMin = Number(process.env.HABITAT_LOOP_LEASE_MIN ?? 10),
+): Promise<{ ok: true; lease: LoopLease; release: () => Promise<void> } | { ok: false; holder?: LoopLease }> {
+  const token = newId('lse');
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const st = await hab.store.adapter.stat(LOOP_LEASES).catch(() => null);
+    const map = await readMap<LeaseMap>(hab, LOOP_LEASES);
+    const cur = map[loop];
+    if (cur && Date.parse(cur.until) > Date.now() && cur.owner !== owner) return { ok: false, holder: cur };
+    const lease: LoopLease = {
+      owner,
+      at: nowISO(),
+      until: nowISO(Date.now() + Math.max(1, ttlMin) * 60_000),
+      token,
+    };
+    try {
+      await hab.store.adapter.write(LOOP_LEASES, `${JSON.stringify({ ...map, [loop]: lease }, null, 2)}
+`, {
+        ifHash: st ? st.hash : 'new',
+        backup: false,
+      });
+      return {
+        ok: true,
+        lease,
+        release: async () => {
+          await writeMap<LeaseMap>(hab, LOOP_LEASES, (m) => {
+            if (m[loop]?.token !== token) return m;
+            const next = { ...m };
+            delete next[loop];
+            return next;
+          }).catch(() => undefined);
+        },
+      };
+    } catch (e) {
+      if (e instanceof ConflictError) continue;
+      throw e;
+    }
+  }
+  return { ok: false };
+}
+
+/** 租约状态（CLI / 调试用）：过期的不返回 */
+export async function listLeases(hab: Habitat): Promise<Record<string, LoopLease>> {
+  const map = await readMap<LeaseMap>(hab, LOOP_LEASES);
+  const now = Date.now();
+  return Object.fromEntries(Object.entries(map).filter(([, l]) => Date.parse(l.until) > now));
+}
+
+/* ---------------- 认领：判断类工单里的条目先到先得 ---------------- */
+
+export async function listClaims(hab: Habitat, loop?: string): Promise<LoopClaim[]> {
+  const map = await readMap<ClaimMap>(hab, LOOP_CLAIMS);
+  const now = Date.now();
+  return Object.values(map)
+    .filter((c) => Date.parse(c.until) > now && (!loop || c.loop === loop))
+    .sort((a, b) => a.at.localeCompare(b.at));
+}
+
+export async function claimTarget(
+  hab: Habitat,
+  loop: string,
+  target: string,
+  by: string,
+  ttlMin = Number(process.env.HABITAT_CLAIM_MIN ?? 120),
+): Promise<{ ok: true; claim: LoopClaim } | { ok: false; holder: LoopClaim }> {
+  const key = `${loop}:${target}`;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const st = await hab.store.adapter.stat(LOOP_CLAIMS).catch(() => null);
+    const map = await readMap<ClaimMap>(hab, LOOP_CLAIMS);
+    const cur = map[key];
+    if (cur && Date.parse(cur.until) > Date.now() && cur.by !== by) return { ok: false, holder: cur };
+    const claim: LoopClaim = {
+      loop,
+      target,
+      by,
+      at: nowISO(),
+      until: nowISO(Date.now() + Math.max(1, ttlMin) * 60_000),
+    };
+    try {
+      await hab.store.adapter.write(LOOP_CLAIMS, `${JSON.stringify({ ...map, [key]: claim }, null, 2)}
+`, {
+        ifHash: st ? st.hash : 'new',
+        backup: false,
+      });
+      return { ok: true, claim };
+    } catch (e) {
+      if (e instanceof ConflictError) continue;
+      throw e;
+    }
+  }
+  throw new Error('认领竞争激烈，稍后再试');
+}
+
+export async function releaseClaims(hab: Habitat, loop: string, by?: string): Promise<number> {
+  let removed = 0;
+  const now = Date.now();
+  await writeMap<ClaimMap>(hab, LOOP_CLAIMS, (map) => {
+    const next: ClaimMap = {};
+    for (const [k, c] of Object.entries(map)) {
+      const expired = Date.parse(c.until) <= now;
+      const mine = c.loop === loop && (!by || c.by === by);
+      if (expired || mine) {
+        removed += 1;
+        continue;
+      }
+      next[k] = c;
+    }
+    return next;
+  });
+  return removed;
 }
 
 /** 环境变量把某个定时器关掉时，健康状态要如实说「被关了」，而不是「从未运行」 */
@@ -156,13 +335,14 @@ export async function computeStatuses(hab: Habitat): Promise<StatusReport> {
     if (!mail && def.requires.includes('mail:smtp')) blocked.push('邮件通道');
     if (!mail && def.requires.includes('mail:imap')) blocked.push('收信通道');
     const env = envDisabled(def);
-    if (env) blocked.push(env);
+    const enabled = ov.enabled !== false && !env;
 
     return evaluateLoop(def, latest[def.id], {
       now,
-      enabled: ov.enabled !== false,
+      enabled,
       blocked,
       backlog: def.backlog ? backlog[def.backlog] : undefined,
+      pausedReason: env ? `被 ${env} 关闭` : ov.enabled === false ? '配置里停用' : undefined,
     });
   });
 
@@ -209,43 +389,51 @@ function alreadyRan(def: LoopDef, last: LoopReceipt | undefined, now: number): b
 }
 
 /** 判断类 / 人工确认类闭环的运行 = 出一张可执行的工单，不假装已经做完 */
-async function workOrder(hab: Habitat, def: LoopDef): Promise<{ text: string; counts: Record<string, number>; produced: string[] }> {
+async function workOrder(hab: Habitat, def: LoopDef, by: string): Promise<{ text: string; counts: Record<string, number>; produced: string[] }> {
   const produced: string[] = [];
   const lines: string[] = [`# 工单：${def.name}（${def.id}）`, '', `目标：${def.intent}`, ''];
 
+  // 已经被别人认领的条目不再出现在工单里：两个 agent 做同一件事是最浪费的重复劳动。
+  const claimed = await listClaims(hab, def.id);
+  const blocked = new Set(claimed.filter((c) => c.by !== by).map((c) => c.target));
+  if (blocked.size) lines.push(`（已被其他执行者认领 ${blocked.size} 条，本次略过；认领 ${process.env.HABITAT_CLAIM_MIN ?? 120} 分钟后过期）`, '');
+
   if (def.id === 'triage-inbox') {
-    const items = hab.inbox().slice(0, 12);
+    const all = hab.inbox();
+    const items = all.filter((x) => !blocked.has(x.id)).slice(0, 12);
     produced.push(...items.map((x) => x.id));
-    lines.push(`积压 ${hab.inbox().length} 条，先看前 ${items.length} 条：`);
+    lines.push(`积压 ${all.length} 条（可接 ${Math.max(0, all.length - blocked.size)} 条），先看前 ${items.length} 条：`);
     for (const x of items) lines.push(`- ${x.title}  ${x.id}`);
-    lines.push('', '做完：逐条给出「留 / 归 / 并 / 弃」，走 propose；处理完用 `loops beat` 记产物。');
-    return { text: lines.join('\n'), counts: { inbox: hab.inbox().length, listed: items.length }, produced };
+    lines.push('', '动手前先 `habitat loops claim triage-inbox <id>` 占住；做完走 propose，最后 `loops beat` 交账。');
+    return { text: lines.join('\n'), counts: { inbox: all.length, listed: items.length, claimed: blocked.size }, produced };
   }
 
   if (def.id === 'renew-due' || def.id === 'challenge-supersede' || def.id === 'review-interval') {
-    const due = await reviewQueue(hab);
+    const due = (await reviewQueue(hab)).filter((x) => !blocked.has(x.id));
     const take = due.slice(0, 5);
     produced.push(...take.map((x) => x.id));
     lines.push(`到期 ${due.length} 条，按「一次不超过 5 条」先看：`);
     for (const x of take) lines.push(`- ${x.title}（${x.idleDays} 天没碰）  ${x.id}`);
     lines.push('', '每条：`habitat renew <id>` 拿证据包 → 有冲突提 supersededBy，没有就 `review --ok`。');
-    return { text: lines.join('\n'), counts: { due: due.length, listed: take.length }, produced };
+    return { text: lines.join('\n'), counts: { due: due.length, listed: take.length, claimed: blocked.size }, produced };
   }
 
   if (def.id === 'repair-links') {
-    const targets = hab.store.unresolvedTargets().slice(0, 20);
+    const all = hab.store.unresolvedTargets();
+    const targets = all.filter((t) => !blocked.has(t.target)).slice(0, 20);
     produced.push(...targets.map((t) => t.target));
-    lines.push(`未解析目标 ${hab.store.unresolvedTargets().length} 个，先看前 ${targets.length} 个：`);
+    lines.push(`未解析目标 ${all.length} 个，先看前 ${targets.length} 个：`);
     for (const t of targets) lines.push(`- [[${t.target}]] 被引用 ${t.refs.length} 次`);
     lines.push('', '每个目标：补一篇、改指向、或明确删链接；走 propose。');
-    return { text: lines.join('\n'), counts: { unresolved: targets.length }, produced };
+    return { text: lines.join('\n'), counts: { unresolved: all.length, listed: targets.length, claimed: blocked.size }, produced };
   }
 
   if (def.id === 'digest-source' || def.id === 'connect-notes') {
     const snap = await lifeSnapshot(hab);
-    produced.push(...snap.agentReady.map((x) => x.id));
-    lines.push(renderNext(snap));
-    return { text: lines.join('\n'), counts: { agentReady: snap.agentReady.length }, produced };
+    const ready = snap.agentReady.filter((x) => !blocked.has(x.id));
+    produced.push(...ready.map((x) => x.id));
+    lines.push(renderNext({ ...snap, agentReady: ready }));
+    return { text: lines.join('\n'), counts: { agentReady: ready.length, claimed: blocked.size }, produced };
   }
 
   if (def.id === 'proposal-approve') {
@@ -296,8 +484,30 @@ export async function runLoop(hab: Habitat, id: string, opts: RunOptions = {}): 
     };
   }
 
-  const started = Date.now();
   const actor = opts.actor ?? 'system';
+
+  // 跨进程租约：只有会写 / 会外发的闭环需要互斥。
+  // 判断类只出工单（纯读），两个 agent 同时拿工单是安全的；条目冲突由 claim 解决。
+  const needsLease = def.mode === 'auto' || def.mode === 'verify';
+  let releaseLease = async () => {};
+  if (needsLease) {
+    const lease = await acquireLease(hab, id, actor);
+    if (!lease.ok) {
+      const until = lease.holder ? lease.holder.until.slice(11, 16) : '未知时间';
+      return {
+        loop: id,
+        ran: false,
+        result: 'ok',
+        deduped: true,
+        output: `跳过：${def.name} 正被 ${lease.holder?.owner ?? '另一个执行者'} 执行（租约到 ${until}）。`,
+        note: 'lease',
+      };
+    }
+    releaseLease = lease.release;
+  }
+
+  const started = Date.now();
+  try {
   let result: LoopReceipt['result'] = 'ok';
   let output = '';
   let counts: Record<string, number> | undefined;
@@ -416,7 +626,7 @@ export async function runLoop(hab: Habitat, id: string, opts: RunOptions = {}): 
       break;
     }
     default: {
-      const wo = await workOrder(hab, def);
+      const wo = await workOrder(hab, def, actor);
       result = 'prepared';
       output = wo.text;
       counts = wo.counts;
@@ -440,6 +650,9 @@ export async function runLoop(hab: Habitat, id: string, opts: RunOptions = {}): 
   await appendReceipt(hab, receipt);
 
   return { loop: id, ran: true, result, output, counts, produced, note };
+  } finally {
+    await releaseLease();
+  }
 }
 
 export async function beat(hab: Habitat, id: string, input: { ok?: boolean; note?: string; produced?: string[]; actor?: string; counts?: Record<string, number> }): Promise<LoopReceipt> {
@@ -454,7 +667,64 @@ export async function beat(hab: Habitat, id: string, input: { ok?: boolean; note
     note: input.note,
   };
   await appendReceipt(hab, receipt);
+  // 交账即释放：这个执行者名下的认领全部归还，没做完的条目下一轮还能被别人接。
+  await releaseClaims(hab, id, receipt.by);
   return receipt;
+}
+
+/* ---------------- 告警：down 不能只靠人看 ---------------- */
+
+export interface AlertReport {
+  at: string;
+  alerted: { id: string; name: string; reason: string }[];
+  skipped: string[];
+  mailed: boolean;
+  mailError?: string;
+}
+
+/**
+ * 把 down 的闭环推到通知列表（可选邮件）。
+ * 每条每天最多一次：告警的价值在「第一次」，重复轰炸只会让人关掉通知。
+ */
+export async function runLoopAlerts(hab: Habitat, opts: { mail?: boolean } = {}): Promise<AlertReport> {
+  const status = await computeStatuses(hab);
+  const ntc = new Notifier(hab.store);
+  const report: AlertReport = { at: nowISO(), alerted: [], skipped: [], mailed: false };
+
+  for (const s of status.states) {
+    if (s.state !== 'down') continue;
+    const def = loopById(s.id);
+    if (!def) continue;
+    const ruleId = `loop:${s.id}`;
+    if (await ntc.alreadyToday(ruleId)) {
+      report.skipped.push(`${def.name}（今天已告警）`);
+      continue;
+    }
+    await ntc.add({
+      level: 'danger',
+      title: `闭环「${def.name}」停了`,
+      body: `${s.reason}。去「闭环」页看是修、停，还是明确接受降级。`,
+      href: '#/loops',
+      ruleId,
+    });
+    report.alerted.push({ id: s.id, name: def.name, reason: s.reason });
+  }
+
+  if (opts.mail && report.alerted.length && loadMailConfig()) {
+    const text = [
+      `${report.alerted.length} 条自动化闭环停了：`,
+      '',
+      ...report.alerted.map((x) => `- ${x.name}（${x.id}）：${x.reason}`),
+      '',
+      '打开 闭环 页：修、停、或明确接受降级。',
+      '— Habitat',
+    ].join('\n');
+    const r = await sendMail({ subject: `⛔ ${report.alerted.length} 条闭环停了`, text });
+    report.mailed = r.ok;
+    if (!r.ok) report.mailError = r.error;
+  }
+
+  return report;
 }
 
 /* ---------------- 协商与自检 ---------------- */
@@ -510,12 +780,14 @@ export async function checkAutomation(hab: Habitat): Promise<CheckReport> {
   const double = [...byLoop.entries()].filter(([, by]) => by.size > 1).map(([id]) => id);
 
   const mismatch: CheckReport['mismatch'] = [];
+  const sameOwner = (owner: string, by: string) =>
+    owner === by || owner === by.replace(/^agent:/, '') || `agent:${owner}` === by;
   for (const d of LOOPS) {
     const ov = status.config.loops[d.id];
     if (!ov?.owner) continue;
     const last = latest[d.id];
     if (!last) continue;
-    if (ov.owner !== last.by && last.by !== 'system') mismatch.push({ id: d.id, owner: ov.owner, lastBy: last.by });
+    if (!sameOwner(ov.owner, last.by)) mismatch.push({ id: d.id, owner: ov.owner, lastBy: last.by });
   }
 
   return {

@@ -225,6 +225,23 @@ export const endpoints = {
   reconcile: () => api.post<{ ok: boolean; report: ReconcileView }>('/api/agent/reconcile'),
   reindex: () => api.post<{ ok: boolean }>('/api/system/reindex'),
 
+  loops: () => api.get<LoopsView>('/api/loops'),
+  loop: (id: string) => api.get<LoopDetailView>(`/api/loops/${encodeURIComponent(id)}`),
+  runLoop: (id: string, b?: { dryRun?: boolean; force?: boolean; mail?: boolean; fetch?: boolean; out?: string }) =>
+    api.post<LoopRunView>(`/api/loops/${encodeURIComponent(id)}/run`, b ?? {}),
+  setLoopConfig: (id: string, b: { enabled?: boolean; owner?: string }) =>
+    api.post<{ ok: boolean; config: { enabled?: boolean; owner?: string } }>(`/api/loops/${encodeURIComponent(id)}/config`, b),
+  checkLoops: () => api.get<LoopCheckView>('/api/loops/check'),
+  loopsBrief: () => api.get<{ brief: string }>('/api/loops/brief'),
+  claimLoop: (id: string, target: string) =>
+    api.post<{ ok: boolean; claim?: { target: string; until: string }; holder?: { by: string; until: string } }>(
+      `/api/loops/${encodeURIComponent(id)}/claim`,
+      { target },
+    ),
+  releaseLoop: (id: string, by?: string) =>
+    api.post<{ ok: boolean; released: number }>(`/api/loops/${encodeURIComponent(id)}/release`, { by }),
+  alertLoops: (mail = false) => api.post<{ ok: boolean; report: { alerted: { id: string; name: string; reason: string }[]; skipped: string[]; mailed: boolean } }>('/api/loops/alerts', { mail }),
+
   createJob: (b: unknown) => api.post<{ ok: boolean; job: Record<string, unknown> }>('/api/jobs', b),
   advanceJob: (id: string, approve?: boolean) => api.post<{ ok: boolean; job: JobView }>(`/api/jobs/${id}/advance`, { approve }),
   failJob: (id: string, reason: string) => api.post<{ ok: boolean; job: JobView; permanent: boolean }>(`/api/jobs/${id}/fail`, { reason }),
@@ -452,6 +469,87 @@ export interface RuleRunView {
   at: string; rules: number; evaluated: number;
   fired: { rule: string; title: string }[];
   skipped: string[];
+}
+
+export interface LoopDefView {
+  id: string;
+  name: string;
+  family: 'maintain' | 'digest' | 'decide' | 'deliver';
+  intent: string;
+  mode: 'auto' | 'assist' | 'gate' | 'verify';
+  autonomy: 'read' | 'derived' | 'propose' | 'commit' | 'external';
+  trigger: { kind: string; minutes?: number; at?: string; on?: string; note?: string };
+  maxSilenceMinutes: number;
+  executors: string[];
+  requires: string[];
+  entry: { cli?: string; api?: string; mcp?: string; ui?: string; command?: string };
+  steps: string[];
+  outputs: string[];
+  evidence: string[];
+  idempotency: string;
+  degrade: Record<string, string>;
+  backlog?: string;
+  ownerHint: string;
+  harnessArgs?: string;
+  serverOnly?: boolean;
+  note?: string;
+}
+
+export interface LoopStateView {
+  id: string;
+  state: 'ok' | 'late' | 'down' | 'never' | 'paused' | 'blocked' | 'manual';
+  lastAt?: string;
+  lastBy?: string;
+  lastResult?: string;
+  silenceMinutes?: number;
+  maxSilenceMinutes: number;
+  backlog?: number;
+  reason: string;
+}
+
+export interface LoopReceiptView {
+  loop: string; at: string; by: string; trigger: string;
+  result: string; durationMs?: number; counts?: Record<string, number>;
+  produced?: string[]; note?: string;
+}
+
+export interface LoopsView {
+  at: string;
+  loops: LoopDefView[];
+  states: LoopStateView[];
+  summary: Record<string, number>;
+  backlog: Record<string, number>;
+  config: { version: number; loops: Record<string, { enabled?: boolean; owner?: string; note?: string }> };
+}
+
+export interface LoopDetailView {
+  loop: LoopDefView;
+  status: LoopStateView;
+  claims: { loop: string; target: string; by: string; at: string; until: string }[];
+  recent: LoopReceiptView[];
+}
+
+export interface LoopRunView {
+  ok: boolean;
+  loop: string;
+  ran: boolean;
+  result: string;
+  output: string;
+  counts?: Record<string, number>;
+  produced?: string[];
+  deduped?: boolean;
+  note?: string;
+}
+
+export interface LoopCheckView {
+  at: string;
+  summary: Record<string, number>;
+  silent: { id: string; state: string; reason: string }[];
+  never: string[];
+  unowned: string[];
+  double: string[];
+  mismatch: { id: string; owner: string; lastBy: string }[];
+  passed: boolean;
 }
 
 export interface ReconcileView {
