@@ -315,7 +315,10 @@ export interface NoteView {
 }
 export interface RepContent {
   rep: { id: string; carrier: string; path: string; locked: boolean; partId: string; workId: string; rev?: number };
+  /** 整份文件（含 frontmatter），编辑器用它当源码 */
   content: string;
+  /** 服务端解析出的正文（frontmatter 已去掉），阅读器用它，避免前端各写一套正则 */
+  body: string;
   /** 打开时这份内容的哈希：保存时当作基准回传，服务端才知道有没有人抢先改过 */
   hash: string;
   locked: boolean;

@@ -111,9 +111,10 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
     };
   }, []);
 
-  const body = (repData?.content ?? '')
-    .replace(/^---\n[\s\S]*?\n---\n/, '')
-    .replace(/^\s*#\s+.+\n+/, '');
+  // 正文优先用服务端解析好的那份；正则兜底是为了旧缓存和 CRLF 文件不漏出 YAML
+  const body = (repData?.body ?? repData?.content ?? '')
+    .replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+    .replace(/^\s*#\s+.+\r?\n+/, '');
   const carrier = repData?.rep.carrier ?? 'md';
   const fileUrl = currentRep ? `/api/reps/${encodeURIComponent(currentRep)}/file` : '';
   const html = carrier === 'html' ? body : md.render(body);

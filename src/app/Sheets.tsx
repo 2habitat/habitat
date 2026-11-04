@@ -575,7 +575,7 @@ function alignThreeWay(baseText: string, mineText: string, theirsText: string): 
   return rows;
 }
 
-const FM_RE = /^---\n[\s\S]*?\n---\n?/;
+const FM_RE = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/;
 const stripFm = (s: string) => s.replace(FM_RE, '');
 
 function ConflictSheet({ props }: { props: Record<string, unknown> }) {

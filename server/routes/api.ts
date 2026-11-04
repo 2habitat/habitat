@@ -18,6 +18,7 @@ import { findWorkCandidates } from '../core/candidates.ts';
 import { saveAsset, assetUrl, assetMarkdown } from '../core/assets.ts';
 import { loadMailConfig, mailStatus, sendMail, type MailConfig } from '../core/mailer.ts';
 import { configPath } from '../core/mailer.ts';
+import { parseDoc } from '../../shared/frontmatter.ts';
 import { runReminders } from '../core/reminders.ts';
 import { ingestMail } from '../core/inbox-mail.ts';
 import { collectBrief, renderBrief, runTidy } from '../core/tidy.ts';
@@ -359,9 +360,12 @@ function asBuffer(body: unknown): Buffer | null {
     const cursor = hab.store.cursors.get(id);
     // hash + rev 一起回给客户端：它保存时要拿这个当基准，服务端才知道有没有人抢先改过
     const st = rel ? await hab.store.adapter.stat(rel) : undefined;
+    // 正文由服务端解析后一起给：文件可能是 CRLF，前端再自己正则切分迟早出错
+    const body = rel && rel.endsWith('.md') ? parseDoc(content).body : content;
     return {
       rep,
       content,
+      body,
       hash: st?.hash ?? 'new',
       locked: (rep as { locked?: boolean }).locked ?? false,
       cursor: cursor ?? { repId: id, current: 0, furthest: 0, updatedAt: '' },

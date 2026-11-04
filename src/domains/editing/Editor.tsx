@@ -22,8 +22,10 @@ const md = new MarkdownIt({ html: true, linkify: true });
 interface Parsed { fm: Record<string, string>; body: string; rawFmKeys: string[] }
 
 function splitDoc(raw: string): Parsed {
-  const m = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
-  if (!m) return { fm: {}, body: raw, rawFmKeys: [] };
+  // 文件可能是 CRLF：先归一，否则 `---\r\n` 匹配不上，整块 YAML 会当正文
+  const src = raw.replace(/\r\n/g, '\n');
+  const m = /^---\n([\s\S]*?)\n---\n?/.exec(src);
+  if (!m) return { fm: {}, body: src, rawFmKeys: [] };
   const fm: Record<string, string> = {};
   const keys: string[] = [];
   for (const line of m[1].split('\n')) {
@@ -37,7 +39,7 @@ function splitDoc(raw: string): Parsed {
     fm[k] = v;
     keys.push(k);
   }
-  return { fm, body: raw.slice(m[0].length), rawFmKeys: keys };
+  return { fm, body: src.slice(m[0].length), rawFmKeys: keys };
 }
 
 const FORM_FIELDS = ['title', 'status', 'kind', 'tags', 'srcIds', 'source'] as const;
@@ -71,11 +73,13 @@ export function EditorPage({ repId, noteId }: { repId?: string; noteId?: string 
 
   function patch(key: string, value: string) {
     setRaw((r) => {
-      const { rawFmKeys } = splitDoc(r);
+      // 归一换行后再改：CRLF 文件里 `^---\n` 找不到，会把 frontmatter 再插一份
+      const src = r.replace(/\r\n/g, '\n');
+      const { rawFmKeys } = splitDoc(src);
       if (rawFmKeys.includes(key)) {
-        return r.replace(new RegExp(`^${key}:.*$`, 'm'), `${key}: ${JSON.stringify(value)}`);
+        return src.replace(new RegExp(`^${key}:.*$`, 'm'), `${key}: ${JSON.stringify(value)}`);
       }
-      return r.replace(/^---\n/, `---\n${key}: ${JSON.stringify(value)}\n`);
+      return src.replace(/^---\n/, `---\n${key}: ${JSON.stringify(value)}\n`);
     });
     setDirty(true);
   }
