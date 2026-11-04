@@ -579,7 +579,6 @@ export function ProjectsPage() {
           action={<button className="btn" onClick={() => openSheet('project')}>建一个</button>}
         />
       ) : projects.map((p) => {
-        const pct = p.actions.length ? p.done / p.actions.length : 0;
         return (
           <article key={p.id} className="entry">
             <div className="entry-main">
@@ -595,26 +594,22 @@ export function ProjectsPage() {
                     {p.title}
                   </button>
                 </h3>
-                <span className="entry-kind">{p.state === 'active' ? '进行中' : p.state}</span>
+                <span className="entry-stage" data-empty={p.state === 'active' ? '0' : '1'}>
+                  {p.state === 'active' ? '进行中' : p.state}
+                </span>
+                {p.actions.length > 0 && (
+                  <span className="entry-kind">{p.done}/{p.actions.length}</span>
+                )}
               </div>
               {p.desc && <p className="entry-desc">{p.desc}</p>}
-              {p.actions.length === 0 && (
-                <p className="entry-desc">还没挂任务。项目要有下一步，否则它只是个愿望。</p>
-              )}
+              {p.actions.length === 0 && <p className="entry-desc">还没挂任务</p>}
 
               {p.actions.length > 0 && (
-                <div className="entry-progress" style={{ maxWidth: 340 }}>
-                  <Bar value={pct} />
-                  <span className="mono">{p.done}/{p.actions.length}</span>
-                </div>
-              )}
-
-              {p.actions.length > 0 && (
-                <div className="entry-body" style={{ marginTop: 10 }}>
+                <div className="entry-body">
                   {p.actions.slice(0, 6).map((a) => (
-                    <div key={a.id} className="part" data-nav-row={a.id}>
-                      <span className="check-mark small" style={{ color: a.state === 'done' ? 'var(--ok)' : 'var(--text-3)' }}>
-                        {a.state === 'done' ? <Icon name="check" size={12} /> : '·'}
+                    <div key={a.id} className="task-line" data-done={a.state === 'done' ? '1' : '0'} data-nav-row={a.id}>
+                      <span className="task-check">
+                        {a.state === 'done' ? <Icon name="check" size={12} /> : null}
                       </span>
                       <button
                         type="button"
@@ -622,20 +617,22 @@ export function ProjectsPage() {
                         onClick={() => openPeek(a.id)}
                         title="看详情"
                         data-testid="project-task-open"
-                        style={a.state === 'done' ? { color: 'var(--text-3)', textDecoration: 'line-through' } : undefined}
                       >
                         {a.text}
                       </button>
-                      {a.due && <span className="mono muted">{a.due}</span>}
+                      {a.due && <span className="task-date">{a.due}</span>}
                     </div>
                   ))}
                 </div>
               )}
             </div>
             <div className="entry-side">
-              <button className="btn btn-sm btn-quiet" onClick={() => openSheet('task', { projectId: p.id })} data-testid="project-add-task">
-                加任务
-              </button>
+              <div className="entry-actions">
+                <button className="btn btn-sm btn-quiet" onClick={() => openSheet('task', { projectId: p.id })} data-testid="project-add-task">
+                  <Icon name="plus" size={12} />
+                  加任务
+                </button>
+              </div>
             </div>
           </article>
         );

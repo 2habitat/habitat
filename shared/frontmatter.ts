@@ -47,6 +47,11 @@ export function patchFm(fm: Record<string, unknown>, patch: Record<string, unkno
     if (v === undefined) delete out[k];
     else out[k] = v;
   }
+  // id 是身份，放在第一行：翻文件的人第一眼就该看到「这是谁」
+  if ('id' in out && Object.keys(out)[0] !== 'id') {
+    const { id, ...rest } = out;
+    return { id, ...rest };
+  }
   return out;
 }
 

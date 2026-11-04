@@ -396,17 +396,15 @@ input[type='checkbox']:checked { animation: check-pop 200ms var(--ease-spring); 
    ========================================================================== */
 .ledger {
   display: flex; align-items: stretch;
+  /* 只留一条上边线把数字「架住」；格与格之间靠间距，不画竖线 */
   border-top: 1px solid var(--border-strong);
-  border-bottom: 1px solid var(--rule);
-  margin: var(--sp-5) 0 var(--sp-7);
+  margin: var(--sp-5) 0 var(--sp-6);
 }
 .ledger-cell {
   flex: 1 1 0; min-width: 0;
-  padding: 14px 16px 13px 0;
-  border-right: 1px solid var(--rule);
+  padding: 14px 0 4px;
 }
-.ledger-cell + .ledger-cell { padding-left: 16px; }
-.ledger-cell:last-child { border-right: 0; padding-right: 0; }
+.ledger-cell + .ledger-cell { padding-left: 32px; }
 .ledger-cell[data-zero='1'] .ledger-num { color: var(--text-3); }
 .ledger-num {
   display: block;
@@ -1244,12 +1242,13 @@ input[type='checkbox']:focus-visible { outline: 2px solid var(--accent); outline
   position: relative;
   display: grid; grid-template-columns: 15px minmax(0, 1fr) auto auto;
   align-items: center; gap: 12px;
-  padding: 12px 8px 12px 2px;
-  border-bottom: 1px solid var(--rule);
+  padding: 11px 10px;
+  margin: 0 -10px;
+  border-radius: var(--radius);
+  border-bottom: 0;
   transition: background var(--dur);
 }
-.hit:first-child { border-top: 1px solid var(--border-strong); }
-.hit:hover { background: color-mix(in srgb, var(--surface) 62%, transparent); }
+.hit:hover { background: var(--surface); }
 .hit::before {
   content: ''; position: absolute; left: -10px; top: 10px; bottom: 10px;
   width: 2px; background: transparent; border-radius: 2px;
@@ -1825,13 +1824,17 @@ input[type='checkbox']:focus-visible { outline: 2px solid var(--accent); outline
 .entry {
   display: grid; grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px 24px;
-  padding: 18px 0 17px;
-  border-bottom: 1px solid var(--rule);
+  padding: 17px 12px 16px;
+  margin: 0 -12px;
+  border-radius: var(--radius);
+  transition: background var(--dur) var(--ease);
 }
-.entry:first-of-type { border-top: 1px solid var(--border-strong); }
+/* 不画分隔线：条目之间靠留白和悬停底色分开。线越少，标题越像标题 */
+.entry:hover { background: var(--surface); }
+.entry + .entry { margin-top: 2px; }
 .entry:hover .entry-title h3, .entry:hover .work-title { color: var(--accent-ink); }
 .entry-main { min-width: 0; }
-.entry-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.entry-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .entry-title h3, .entry-title .work-title {
   font-family: var(--font-display); font-size: var(--t-h3); font-weight: 600;
   letter-spacing: .01em; min-width: 0; flex: 0 1 auto;
@@ -1851,29 +1854,90 @@ input[type='checkbox']:focus-visible { outline: 2px solid var(--accent); outline
   font-family: var(--font-mono); font-size: var(--t-micro);
   color: var(--text-3); letter-spacing: .08em; flex: none;
 }
+/* 阶段后面接的补充信息（只读 / 0-9）用间隔点，否则会读成「在读只读」 */
+.entry-title .entry-stage + .entry-kind::before {
+  content: '·'; margin-right: 8px; color: var(--border-strong);
+}
 .entry-meta {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
-  margin-top: 5px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0;
+  margin-top: 6px;
   font-family: var(--font-mono); font-size: var(--t-micro);
   color: var(--text-3); letter-spacing: .03em;
 }
-.entry-note { font-size: var(--t-sm); color: var(--text-2); margin: 8px 0 0; line-height: 1.6; }
-.entry-desc { font-size: var(--t-sm); color: var(--text-3); margin: 5px 0 0; line-height: 1.65; max-width: 68ch; }
-.entry-progress { display: flex; align-items: center; gap: 8px; margin-top: 10px; max-width: 300px; }
-.entry-progress .bar { flex: 1; }
-.entry-progress .mono { color: var(--text-3); }
-.entry-side { display: flex; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: 10px; }
-.entry-stage {
-  font-family: var(--font-mono); font-size: var(--t-micro); letter-spacing: .08em;
-  color: var(--accent-ink); background: var(--accent-soft);
-  padding: 2px 6px; border-radius: 2px; white-space: nowrap;
+/* 元信息之间用间隔点，不画线也不套框 */
+.entry-meta > span + span::before {
+  content: '·'; margin: 0 8px; color: var(--border-strong);
 }
-.entry-stage[data-empty='1'] { color: var(--text-3); background: var(--surface-3); }
-.entry-actions { display: flex; gap: 4px; }
-.entry-body { grid-column: 1 / -1; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.entry-note { font-size: var(--t-xs); color: var(--text-3); margin: 7px 0 0; line-height: 1.6; }
+.entry-desc { font-size: var(--t-sm); color: var(--text-3); margin: 6px 0 0; line-height: 1.65; max-width: 68ch; }
+.entry-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; max-width: 280px; }
+.entry-progress .bar { flex: 1; height: 3px; }
+.entry-progress .mono { color: var(--text-3); }
+.entry-side { display: flex; flex-direction: column; align-items: flex-end; justify-content: flex-start; gap: 10px; }
+/* 阶段：一个点 + 两个字，不再是一块色块 */
+.entry-stage {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-mono); font-size: var(--t-micro); letter-spacing: .06em;
+  color: var(--text-2); white-space: nowrap; flex: none;
+}
+.entry-stage::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); flex: none;
+}
+.entry-stage[data-empty='1'] { color: var(--text-3); }
+.entry-stage[data-empty='1']::before { background: var(--border-strong); }
+.entry-actions { display: flex; gap: 6px; align-items: center; }
+/* 次要动作平时收起来，指针落在这条上才出现——每行只留一个显性按钮 */
+.entry-actions .btn-quiet { opacity: 0; transition: opacity var(--dur) var(--ease); }
+.entry:hover .entry-actions .btn-quiet,
+.entry:focus-within .entry-actions .btn-quiet { opacity: 1; }
+@media (hover: none) { .entry-actions .btn-quiet { opacity: 1; } }
+/* 任务/章节列表收窄到一行舒适的长度，日期列才不会飘到屏幕另一头 */
+.entry-body { grid-column: 1 / -1; margin-top: 4px; padding-top: 4px; max-width: 660px; }
+/* 条目里的动作：文字链接，不是按钮。整条只有标题是粗的 */
+.entry-go {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 0; padding: 0; border: 0; background: none;
+  color: var(--accent-ink); font-family: var(--font-mono);
+  font-size: var(--t-micro); font-weight: 600; letter-spacing: .04em;
+  cursor: pointer;
+}
+.entry-go::before { content: '·'; margin-right: 8px; color: var(--border-strong); font-weight: 400; }
+.entry-go:hover { text-decoration: underline; text-underline-offset: 3px; }
+.entry-ai {
+  padding: 0; border: 0; background: none;
+  color: var(--text-3); font-family: var(--font-mono);
+  font-size: var(--t-micro); letter-spacing: .04em; cursor: pointer;
+  opacity: 0; transition: opacity var(--dur) var(--ease), color var(--dur);
+}
+.entry:hover .entry-ai, .entry:focus-within .entry-ai { opacity: 1; }
+.entry-ai:hover { color: var(--text); }
+@media (hover: none) { .entry-ai { opacity: 1; } }
 
-.part { display: flex; align-items: center; gap: 8px; padding: 7px 0; }
-.part + .part { border-top: 1px solid var(--rule); }
+.part {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; margin: 0 -10px;
+  border-radius: var(--radius);
+  transition: background var(--dur);
+}
+.part:hover { background: var(--surface); }
+.part + .part { border-top: 0; }
+
+/* 项目里的任务行：日期固定一列，不再被推到屏幕最右边 */
+.task-line {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) 88px;
+  align-items: baseline; gap: 10px;
+  padding: 7px 10px; margin: 0 -10px;
+  border-radius: var(--radius);
+  transition: background var(--dur);
+}
+.task-line:hover { background: var(--surface); }
+.task-line .task-date {
+  font-family: var(--font-mono); font-size: var(--t-micro);
+  color: var(--text-3); text-align: right; letter-spacing: .02em;
+}
+.task-line[data-done='1'] .part-title { color: var(--text-3); text-decoration: line-through; }
+.task-check { display: grid; place-items: center; align-self: center; color: var(--ok); }
 
 /* 创作页：四张入口卡，像卡片盒里的索引卡 */
 .compose-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
@@ -2090,4 +2154,102 @@ input[type='checkbox']:focus-visible { outline: 2px solid var(--accent); outline
   .page-title { font-size: 22pt; }
 
   @page { margin: 18mm 16mm; }
+}
+
+/* ==========================================================================
+   书架：一本一张封面
+   --------------------------------------------------------------------------
+   没有封面图，就用活字排一个：书名是封面唯一的主角，左侧那道竖条是书脊，
+   底部一条细线是读到哪了。比列表多给的是「一眼认出是哪本」。
+   ========================================================================== */
+.shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
+  gap: 30px 22px;
+  margin-top: var(--sp-2);
+}
+.work-card { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+
+.cover {
+  position: relative;
+  display: flex; flex-direction: column;
+  aspect-ratio: 4 / 5;
+  padding: 20px 16px 14px 20px;
+  border: 0; border-radius: 1px;
+  background: var(--surface);
+  text-align: left; cursor: pointer;
+  /* 书脚：一条硬边，让封面像是立在架上而不是浮着 */
+  box-shadow: 0 3px 0 -1px var(--border);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  overflow: hidden;
+}
+.cover:hover { transform: translateY(-3px); box-shadow: 0 3px 0 -1px var(--border-strong); }
+.cover:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* 书脊：一条竖色带，颜色按体裁区分，只用来认书不是装饰 */
+.cover-spine {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--accent);
+}
+.cover[data-kind='article'] .cover-spine { background: var(--info); }
+.cover[data-kind='doc'] .cover-spine { background: var(--ok); }
+.cover[data-kind='book'] .cover-spine { background: var(--accent); }
+
+/* 大号编号当水印：填住封面的空，也给「第几本」一个位置 */
+.cover-ghost {
+  position: absolute; right: -8px; top: 4px;
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 76px; line-height: 1; letter-spacing: -.05em;
+  color: var(--text); opacity: .04;
+  pointer-events: none; user-select: none;
+}
+.cover-title {
+  position: relative; z-index: 1;
+  flex: 1; min-height: 0; padding-right: 26px;
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 17px; line-height: 1.4; letter-spacing: .01em;
+  color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+  transition: color var(--dur);
+}
+.cover:hover .cover-title { color: var(--accent-ink); }
+/* 封面下半部放一句摘要：不装饰，填的是信息 */
+.cover-desc {
+  position: relative; z-index: 1;
+  margin-top: 9px;
+  font-size: 11px; line-height: 1.6; color: var(--text-3);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cover-foot { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.cover-bar { display: block; height: 2px; background: var(--surface-3); }
+.cover-bar > i { display: block; height: 100%; background: var(--accent); transition: width var(--dur) var(--ease); }
+.cover-pct { font-size: var(--t-micro); color: var(--text-3); letter-spacing: .04em; }
+
+.card-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0;
+  font-family: var(--font-mono); font-size: var(--t-micro);
+  color: var(--text-3); letter-spacing: .03em;
+}
+.card-meta > span + span::before { content: '·'; margin: 0 6px; color: var(--border-strong); }
+.card-stage { color: var(--text-2); }
+.card-meta .entry-ai { margin-left: auto; }
+
+/* 账本右侧的视图开关：两个字，不加框 */
+.ledger-side { display: flex; align-items: flex-end; padding: 14px 0 4px; margin-left: auto; }
+.view-switch { display: flex; gap: 10px; }
+.view-switch button {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font-family: var(--font-mono); font-size: var(--t-micro);
+  letter-spacing: .08em; color: var(--text-3);
+  transition: color var(--dur);
+}
+.view-switch button[aria-pressed='true'] { color: var(--text); }
+.view-switch button:hover { color: var(--accent-ink); }
+
+@media (max-width: 640px) {
+  .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 22px 14px; }
+  .cover { padding: 12px 10px 10px 14px; }
+  .cover-title { font-size: 15px; -webkit-line-clamp: 4; }
 }

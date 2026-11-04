@@ -21,6 +21,8 @@ export function ShelfPage() {
   });
   const [q, setQ] = useState('');
   const [showSup, setShowSup] = useState(false);
+  const shelfView = useUi((s) => s.shelfView);
+  const setShelfView = useUi((s) => s.setShelfView);
   const openSheet = useUi((s) => s.openSheet);
   const openAi = useUi((s) => s.openAi);
 
@@ -72,6 +74,12 @@ export function ShelfPage() {
         <div className="ledger-cell" data-zero={all.reduce((a, w) => a + w.derived, 0) ? '0' : '1'}>
           <b className="ledger-num">{all.reduce((a, w) => a + w.derived, 0)}</b><span className="ledger-label">衍生笔记</span>
         </div>
+        <div className="ledger-side">
+          <div className="view-switch" role="group" aria-label="书架展示方式">
+            <button aria-pressed={shelfView === 'grid'} onClick={() => setShelfView('grid')} data-testid="shelf-view-grid">书架</button>
+            <button aria-pressed={shelfView === 'list'} onClick={() => setShelfView('list')} data-testid="shelf-view-list">列表</button>
+          </div>
+        </div>
       </div>
 
       {cand && cand.candidates.length > 0 && <CandidateCard list={cand.candidates} onDone={() => void refetch()} />}
@@ -82,6 +90,17 @@ export function ShelfPage() {
           desc={q ? '换个词，或者清掉过滤看全部。' : '采集一份原文，或者新建一篇笔记。目录里已有的 Markdown 也可以直接归组成作品。'}
           action={<button className="btn" onClick={() => openSheet('capture')}>采集一份</button>}
         />
+      ) : shelfView === 'grid' ? (
+        <div className="shelf-grid stagger">
+          {works.map((w, i) => (
+            <WorkCard
+              key={w.work.id}
+              w={w}
+              index={i}
+              onAi={() => openAi({ kind: 'work', id: w.work.id, title: w.work.title })}
+            />
+          ))}
+        </div>
       ) : (
         <div className="stagger">
           {works.map((w) => (
@@ -145,6 +164,39 @@ function CandidateCard({ list, onDone }: { list: WorkCandidateView[]; onDone: ()
   );
 }
 
+/** 书架视图：一张「封面」= 一本书。标题印在封面上，进度是书脚那道细线 */
+function WorkCard({ w, index, onAi }: { w: WorkView; index: number; onAi: () => void }) {
+  const main = w.parts.filter((p) => !p.supplemental);
+  const done = Math.round(w.readPct * 100);
+  const stage = w.stage ? label(STAGE_NAME, w.stage) : '未开始';
+  return (
+    <div className="work-card" data-testid="work-card">
+      <button
+        className="cover"
+        data-kind={w.work.kind}
+        onClick={() => navigate('reader', { work: w.work.id })}
+        data-testid="work-read"
+        title={w.work.title}
+      >
+        <span className="cover-spine" aria-hidden="true" />
+        <span className="cover-ghost" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+        <span className="cover-title">{w.work.title}</span>
+        {w.work.desc && <span className="cover-desc">{w.work.desc}</span>}
+        <span className="cover-foot">
+          <span className="cover-bar" aria-hidden="true"><i style={{ width: `${done}%` }} /></span>
+          <span className="cover-pct mono">{done}%</span>
+        </span>
+      </button>
+      <div className="card-meta">
+        <span>{main.length} 章</span>
+        <span className="card-stage">{stage}</span>
+        {w.locked && <span>只读</span>}
+        <button className="entry-ai" onClick={onAi} data-testid="work-ask-ai">问助手</button>
+      </div>
+    </div>
+  );
+}
+
 function WorkEntry({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: () => void }) {
   const [open, setOpen] = useState(false);
   const main = w.parts.filter((p) => !p.supplemental).sort((a, b) => a.order - b.order);
@@ -166,17 +218,26 @@ function WorkEntry({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: 
             <Icon name="chevron" size={15} className={open ? 'rot-90' : undefined} />
           </button>
           <h3>{w.work.title}</h3>
-          <span className="entry-kind">{label(WORK_KIND, w.work.kind)}</span>
           <span className="entry-stage" data-empty={w.stage ? '0' : '1'}>{stage}</span>
-          {w.locked && <Chip tone="warn">原件只读</Chip>}
+          {/* 类型在书架上是冗余的（这里全是作品），只留真正影响操作的「只读」 */}
+          {w.locked && <span className="entry-kind">只读</span>}
         </div>
 
         <div className="entry-meta">
           <span>{main.length} 章</span>
-          <span>批注 {w.annotations}</span>
-          <span>衍生笔记 {w.derived}</span>
-          {w.originals ? <span>原件 {w.originals}</span> : null}
+          {w.annotations > 0 && <span>批注 {w.annotations}</span>}
+          {w.derived > 0 && <span>衍生 {w.derived}</span>}
           {w.work.updatedAt && <span>{w.work.updatedAt.slice(0, 10)}</span>}
+          {/* 动作跟着文字走，不再单独占右边缘一列 */}
+          <button
+            className="entry-go"
+            onClick={() => navigate('reader', { work: w.work.id })}
+            data-testid="work-read"
+          >
+            {done > 0 ? '继续读' : '开始读'}
+            <Icon name="arrow" size={12} />
+          </button>
+          <button className="entry-ai" onClick={onAi} data-testid="work-ask-ai">问助手</button>
         </div>
 
         {w.next && <p className="entry-note">卡在「{label(STAGE_NAME, w.next.key)}」：{w.next.text}</p>}
@@ -188,15 +249,6 @@ function WorkEntry({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: 
             <span className="mono">{done}%</span>
           </div>
         )}
-      </div>
-
-      <div className="entry-side">
-        <div className="entry-actions">
-          <button className="btn btn-sm btn-quiet" onClick={onAi} data-testid="work-ask-ai">问助手</button>
-          <button className="btn btn-sm btn-primary" onClick={() => navigate('reader', { work: w.work.id })} data-testid="work-read">
-            {done > 0 ? '继续读' : '开始读'}
-          </button>
-        </div>
       </div>
 
       {open && (

@@ -32,6 +32,7 @@ import {
 } from '../shared/loops.ts';
 import { runRules } from './core/rules.ts';
 import { parse as yamlParse } from 'yaml';
+import { parseDoc } from '../shared/frontmatter.ts';
 import type { JournalOp } from '../shared/types.ts';
 import { nowISO } from '../shared/id.ts';
 
@@ -537,6 +538,84 @@ async function main(): Promise<number> {
       console.log(`作品 ${s.works} · 章节 ${s.parts} · 载体 ${s.reps} · 笔记 ${s.notes} · 批注 ${s.annotations} · 任务 ${s.actions} · 日程 ${s.events}`);
       console.log(`链接 ${s.links} 条，未解析 ${s.unresolved} 条（解析率 ${s.links ? ((1 - s.unresolved / s.links) * 100).toFixed(1) : '100.0'}%）`);
       console.log(`附件 ${s.assets} 个 · ${(s.assetBytes / 1048576).toFixed(1)} MB`);
+      return 0;
+    }
+    case 'ids': {
+      // 对象 id 只在 ids.json 里、文件里没有 → 换机/删 state 后所有 id 引用会指空。
+      // 这条命令把 id 写回 frontmatter，让「文件是唯一事实源」对 id 也成立。
+      // 只补「一个文件只属于它」的对象：章节和载体共用一个 md，任务/日程共用一个 tasks.md，
+      // 往那种文件里写 id 会互相覆盖，所以按路径去重、只认独占的。
+      const owners = new Map<string, number>();
+      for (const o of hab.store.all()) {
+        const rel = hab.store.file(o.id);
+        if (rel) owners.set(rel, (owners.get(rel) ?? 0) + 1);
+      }
+      const rows: { id: string; path: string; type: string }[] = [];
+      let shared = 0;
+      let archived = 0;
+      for (const o of hab.store.all()) {
+        const rel = hab.store.file(o.id);
+        if (!rel || !rel.endsWith('.md')) continue;
+        if ((owners.get(rel) ?? 0) > 1) { shared += 1; continue; }
+        // 入库原件只读；归档件不会被任务/批注引用，都不补
+        if (rel.startsWith('originals/')) continue;
+        if (rel.startsWith('archive/')) { archived += 1; continue; }
+        const raw = await hab.store.raw(o.id).catch(() => '');
+        if (!raw) continue;
+        if (!parseDoc(raw).fm.id) rows.push({ id: o.id, path: rel, type: o.type });
+      }
+      if (!rows.length) {
+        console.log('✓ 所有对象都把 id 写在文件里，ids.json 丢了也能重建身份');
+        return 0;
+      }
+      const byType: Record<string, number> = {};
+      for (const r of rows) byType[r.type] = (byType[r.type] ?? 0) + 1;
+      console.log(`有 ${rows.length} 个独占文件的对象没把 id 写进 frontmatter：`);
+      if (shared) console.log(`（另有 ${shared} 个对象与别的对象共用文件，不在此列）`);
+      if (archived) console.log(`（另有 ${archived} 个已归档，不会被引用，不补）`);
+      for (const [t, n] of Object.entries(byType).sort((a, b) => b[1] - a[1])) console.log(`  ${t.padEnd(10)} ${n}`);
+      console.log('');
+      console.log('风险：ids.json 丢失（换机 / 删 state / 只同步 markdown）后这些对象会拿到新 id，');
+      console.log('      任务里的 [project:: …]、批注的 targetRepId、阅读进度、历史变更全部指空。');
+      if (!flag('apply')) {
+        console.log('');
+        console.log('只看不改。加 --apply 通过变更集把 id 写回文件（会留审计记录）。');
+        return 0;
+      }
+      // 分批提交：一次 120 个 op 的变更集没人看得懂
+      const SIZE = 25;
+      const failed: string[] = [];
+      let done = 0;
+      const write = async (batch: { id: string }[], label: string) => {
+        await hab.commitOps(
+          batch.map((r) => ({ t: 'update', id: r.id, patch: { id: r.id } })),
+          'system',
+          label,
+        );
+        done += batch.length;
+        console.log(`  已写回 ${done}/${rows.length}`);
+      };
+      for (let i = 0; i < rows.length; i += SIZE) {
+        const chunk = rows.slice(i, i + SIZE);
+        try {
+          await write(chunk, `补写对象 id（${i + 1}-${i + chunk.length}/${rows.length}）`);
+        } catch {
+          // 批量失败就逐个来：一个坏文件不该拖住整批
+          for (const r of chunk) {
+            try {
+              await write([r], `补写对象 id：${r.path}`);
+            } catch (e) {
+              failed.push(`${r.path}（${(e as Error).message}）`);
+            }
+          }
+        }
+      }
+      if (failed.length) {
+        console.log(`
+有 ${failed.length} 个没能写入：`);
+        for (const f of failed.slice(0, 10)) console.log(`  ${f}`);
+      }
+      console.log(`✓ ${done} 个对象的 id 已落盘`);
       return 0;
     }
     case 'reindex': {

@@ -406,6 +406,7 @@ test('健康页：四项检查都在，重建索引能跑完', async ({ page }) 
 
 test('PDF：点 pdf 载体进阅读器，内嵌显示，Range 请求返回 206', async ({ page }) => {
   await goto(page, 'shelf');
+  await page.click('[data-testid="shelf-view-list"]');
   await page.locator('[data-testid="work-expand"]').first().click();
   await page.waitForTimeout(400);
   const pdfBtn = page.locator('[data-testid="part-carrier"]', { hasText: 'pdf' }).first();

@@ -29,6 +29,8 @@ interface UiState {
   drawer: boolean;
   /** 阅读行宽，方案要求「可调」 */
   readingWidth: 'narrow' | 'normal' | 'wide';
+  /** 书架默认展示：封面墙还是紧凑列表 */
+  shelfView: 'grid' | 'list';
   aiOpen: boolean;
   aiCtx: AiContext;
   paletteOpen: boolean;
@@ -41,6 +43,7 @@ interface UiState {
   toggleCollapsed: () => void;
   setDrawer: (v: boolean) => void;
   setReadingWidth: (w: 'narrow' | 'normal' | 'wide') => void;
+  setShelfView: (v: 'grid' | 'list') => void;
   openAi: (ctx?: Partial<AiContext>) => void;
   closeAi: () => void;
   setAiCtx: (ctx: Partial<AiContext>) => void;
@@ -61,11 +64,11 @@ const saved = (() => {
   }
 })();
 
-function persist(s: Pick<UiState, 'theme' | 'fontSize' | 'radius' | 'collapsed' | 'readingWidth'>): void {
+function persist(s: Pick<UiState, 'theme' | 'fontSize' | 'radius' | 'collapsed' | 'readingWidth' | 'shelfView'>): void {
   try {
     localStorage.setItem('habitat.ui', JSON.stringify({
       theme: s.theme, fontSize: s.fontSize, radius: s.radius, collapsed: s.collapsed,
-      readingWidth: s.readingWidth,
+      readingWidth: s.readingWidth, shelfView: s.shelfView,
     }));
   } catch {
     /* 隐私模式下写不了就算了 */
@@ -78,6 +81,7 @@ export const useUi = create<UiState>((set, get) => ({
   theme: saved.theme ?? 'ningzhi',
   fontSize: saved.fontSize ?? 'md',
   readingWidth: saved.readingWidth ?? 'normal',
+  shelfView: saved.shelfView ?? 'grid',
   drawer: false,
   radius: saved.radius ?? 'soft',
   collapsed: saved.collapsed ?? false,
@@ -91,6 +95,7 @@ export const useUi = create<UiState>((set, get) => ({
   setFontSize: (fontSize) => { set({ fontSize }); persist(get()); },
   setDrawer: (drawer) => set({ drawer }),
   setReadingWidth: (readingWidth) => { set({ readingWidth }); persist(get()); },
+  setShelfView: (shelfView) => { set({ shelfView }); persist(get()); },
   setRadius: (radius) => { set({ radius }); persist(get()); },
   toggleCollapsed: () => { set({ collapsed: !get().collapsed }); persist(get()); },
 

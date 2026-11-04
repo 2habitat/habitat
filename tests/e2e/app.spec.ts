@@ -75,6 +75,8 @@ test('命令面板：⌘K 唤起 → 输入 → 跳转', async ({ page }) => {
 
 test('书架：展开作品 → 打开章节 → 正文渲染出来', async ({ page }) => {
   await goto(page, 'shelf');
+  // 默认是封面墙；章节列表在列表视图里
+  await page.click('[data-testid="shelf-view-list"]');
   const card = page.locator('[data-testid="work-card"]').first();
   await expect(card).toBeVisible();
   await card.locator('[data-testid="work-expand"]').click();
