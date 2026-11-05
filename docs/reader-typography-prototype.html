@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="zh-CN" data-mode="cur" data-theme="ningzhi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>阅读面校样 · Habitat</title>
+<style>
+/* ==========================================================================
+   校样 · 设计令牌（沿用 habitat tokens.css 的凝脂/玄墨，仅补一个达标的 ink-3）
+   ========================================================================== */
+:root{
+  --paper:#f1ece1; --surface:#fbf7ed; --surface-2:#f4eee2; --sunken:#e7e1d3;
+  --ink:#1e1a15; --ink-2:#5b5346; --ink-3:#6b6252;
+  --accent:#b0432b; --accent-ink:#8c3220; --accent-soft:#f3ddd2;
+  --rule:#d8cfbc; --rule-strong:#c6bba6; --hl:#f4df9e;
+  --ok:#3d6b4f;
+  --serif:'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,Georgia,serif;
+  --sans:'Noto Sans SC','Source Han Sans SC','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,'SF Mono',monospace;
+
+  --body-size:17px; --body-lh:1.78; --chars:34;
+  --measure:calc(var(--body-size) * var(--chars));
+  --bar-h:44px; --ruler-h:32px;
+}
+html[data-theme="xuanmo"]{
+  --paper:#121314; --surface:#191a1c; --surface-2:#1f2123; --sunken:#0b0c0d;
+  --ink:#eae5da; --ink-2:#b2aca0; --ink-3:#9a948a;
+  --accent:#d98f63; --accent-ink:#efb68f; --accent-soft:#34251c;
+  --rule:#33373a; --rule-strong:#474c50; --hl:#574a1c;
+  --ok:#6fb08d;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--paper); color:var(--ink);
+  font:15px/1.6 var(--sans);
+  -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column; overflow:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+::selection{background:var(--accent-soft);color:var(--ink)}
+*{scrollbar-width:thin;scrollbar-color:var(--rule-strong) transparent}
+
+/* ==========================================================================
+   校样条：方向名 / 模式 / 工具
+   ========================================================================== */
+.proofbar{
+  height:var(--bar-h); flex:none; display:flex; align-items:center; gap:14px;
+  padding:0 16px; border-bottom:1px solid var(--rule);
+  background:color-mix(in srgb,var(--paper) 86%, var(--surface));
+  position:relative; z-index:20;
+}
+.seal{
+  width:22px; height:22px; flex:none; display:grid; place-items:center;
+  background:var(--accent); color:#fffdf7; border-radius:2px;
+  font:600 12px/1 var(--serif); letter-spacing:0;
+  box-shadow:inset 0 0 0 1px rgba(255,253,247,.24);
+}
+.proof-name{display:flex;align-items:baseline;gap:8px;min-width:0}
+.proof-name b{font:600 13px/1 var(--sans);letter-spacing:.02em}
+.proof-name span{font:11px/1 var(--mono);letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase;white-space:nowrap}
+
+.seg{display:flex;align-items:center;margin-left:8px;border:1px solid var(--rule-strong);border-radius:3px;overflow:hidden;background:var(--surface)}
+.seg button{
+  padding:5px 11px; font-size:12.5px; color:var(--ink-2); border-right:1px solid var(--rule);
+  display:inline-flex; align-items:center; gap:6px; transition:background 120ms,color 120ms;
+}
+.seg button:last-child{border-right:0}
+.seg button:hover{background:var(--surface-2);color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper);font-weight:600}
+.seg em{font:11px/1 var(--mono);font-style:normal;opacity:.6}
+
+.tools{display:flex;align-items:center;gap:10px;margin-left:auto}
+.tool{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.tool-label{font:10.5px/1 var(--mono);letter-spacing:.1em;color:var(--ink-3);text-transform:uppercase}
+.tbtn{min-width:24px;height:24px;display:grid;place-items:center;border:1px solid var(--rule);border-radius:2px;background:var(--surface);font:12px/1 var(--mono);color:var(--ink-2)}
+.tbtn:hover:not(:disabled){border-color:var(--ink-3);color:var(--ink)}
+.tbtn:disabled{opacity:.35;cursor:not-allowed}
+.tbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:transparent;color:var(--accent-ink);font-weight:700}
+.tbtn.wide{min-width:auto;padding:0 8px;font-family:var(--sans);font-size:11.5px}
+.divider{width:1px;height:18px;background:var(--rule)}
+
+/* ==========================================================================
+   量尺：实时读出当前模式的排版参数
+   ========================================================================== */
+.ruler{
+  height:var(--ruler-h); flex:none; display:flex; align-items:center; gap:18px;
+  padding:0 16px; border-bottom:1px solid var(--rule);
+  background:var(--surface); position:relative; z-index:19; overflow-x:auto;
+}
+.metric{display:inline-flex;align-items:baseline;gap:5px;white-space:nowrap;font-size:11.5px;color:var(--ink-3)}
+.metric b{font:600 12px/1 var(--mono);color:var(--ink);letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.metric u{text-decoration:none;font:10px/1 var(--mono);color:var(--ink-3)}
+.metric[data-state="warn"] b{color:var(--accent)}
+.metric[data-state="ok"] b{color:var(--ok)}
+.ruler-sum{margin-left:auto;font:11px/1 var(--mono);letter-spacing:.06em;color:var(--ink-3);white-space:nowrap}
+.ruler-sum b{color:var(--ink)}
+
+/* ==========================================================================
+   舞台：三栏 / 两栏
+   ========================================================================== */
+.stage{flex:1;min-height:0;display:grid;grid-template-columns:232px minmax(0,1fr) 300px;gap:24px;padding:0 16px}
+html[data-mode="b"] .stage,html[data-mode="c"] .stage{grid-template-columns:216px minmax(0,1fr)}
+
+/* ---- 左：章目录 ---- */
+.toc{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--rule);padding:10px 12px 0 0}
+.toc-head{padding:2px 8px 10px;border-bottom:1px solid var(--rule)}
+.toc-title{font:600 17px/1.3 var(--serif);letter-spacing:.01em}
+.toc-sub{margin-top:4px;font:10.5px/1 var(--mono);letter-spacing:.09em;color:var(--ink-3)}
+.toc-list{flex:1;min-height:0;overflow-y:auto;padding:6px 0}
+.toc-item{
+  display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:6px;align-items:baseline;
+  width:100%;text-align:left;padding:6px 8px;border-radius:2px;color:var(--ink-2);
+  font-size:13px;line-height:1.5;transition:background 120ms,color 120ms;
+}
+.toc-item:hover{background:var(--surface-2);color:var(--ink)}
+.toc-item[aria-current="true"]{background:var(--accent-soft);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
+.toc-no{font:10.5px/1 var(--mono);letter-spacing:.04em;color:var(--ink-3)}
+.toc-item[aria-current="true"] .toc-no{color:var(--accent)}
+.toc-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toc-count{font:10px/1 var(--mono);color:var(--ink-3)}
+.toc-sub2{display:none;margin:2px 0 4px 26px;border-left:1px solid var(--rule);padding-left:10px}
+html[data-mode="b"] .toc-sub2,html[data-mode="c"] .toc-sub2{display:block}
+.toc-sub2 a{display:block;padding:4px 0;font-size:12px;color:var(--ink-3);line-height:1.4}
+.toc-sub2 a:hover{color:var(--ink)}
+.toc-sub2 a[data-cur="1"]{color:var(--accent-ink);font-weight:600}
+.toc-foot{display:flex;justify-content:space-between;gap:8px;padding:8px 8px 10px;border-top:1px solid var(--rule);font:10.5px/1 var(--mono);color:var(--ink-3)}
+.toc-foot .only-b{display:none}
+html[data-mode="b"] .toc-foot .only-cur,html[data-mode="c"] .toc-foot .only-cur{display:none}
+html[data-mode="b"] .toc-foot .only-b,html[data-mode="c"] .toc-foot .only-b{display:inline}
+
+/* ---- 中：滚动区 ---- */
+.scroll{overflow-y:auto;min-width:0;padding:0 8px 0 0;position:relative}
+html[data-mode="b"] .scroll,html[data-mode="c"] .scroll{padding-right:0}
+
+/* ---- 右：批注 / 血缘（仅现状与 A） ---- */
+.side{overflow-y:auto;border-left:1px solid var(--rule);padding:10px 0 0 16px;min-width:0}
+html[data-mode="b"] .side,html[data-mode="c"] .side{display:none}
+.side h3{font:600 12px/1 var(--sans);letter-spacing:.04em;margin:0 0 10px;display:flex;align-items:baseline;gap:8px}
+.side h3 span{font:10.5px/1 var(--mono);color:var(--ink-3);font-weight:400;letter-spacing:.06em;margin-left:auto}
+.side .empty{font-size:12.5px;line-height:1.7;color:var(--ink-3);margin:0 0 18px}
+.lineage{display:flex;gap:8px;align-items:center;width:100%;text-align:left;padding:9px 0;border-bottom:1px solid var(--rule);font-size:12.5px;color:var(--ink-2)}
+.lineage:hover{color:var(--accent-ink)}
+.lineage i{font:10.5px/1 var(--mono);font-style:normal;color:var(--ink-3);margin-left:auto;flex:none}
+
+/* ==========================================================================
+   正文
+   ========================================================================== */
+.flow{display:block;padding-bottom:120px}
+html[data-mode="b"] .flow,html[data-mode="c"] .flow{
+  display:grid;grid-template-columns:var(--measure) 230px;
+  column-gap:48px;justify-content:center;
+}
+
+.doc{padding-top:28px}
+html[data-mode="cur"] .doc{
+  max-width:652px;
+  font-family:var(--serif);font-size:17px;line-height:1.95;
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc{
+  max-width:var(--measure);margin-inline:auto;
+  font-family:var(--sans);font-size:var(--body-size);line-height:var(--body-lh);
+  text-spacing-trim:trim-start;
+  text-autospace:normal;
+}
+html[data-mode="c"] .doc{
+  line-break:strict;
+  hanging-punctuation:allow-end;
+}
+
+/* 章题：现状没有扉页，方案 B 起才有 */
+.doc-head{display:none;margin:0 0 34px;padding-bottom:18px;border-bottom:1px solid var(--rule)}
+html[data-mode="b"] .doc-head,html[data-mode="c"] .doc-head{display:block}
+.kicker{margin:0 0 10px;font:600 10.5px/1 var(--mono);letter-spacing:.16em;color:var(--accent);text-transform:uppercase}
+.doc h1{margin:0;font:600 30px/1.28 var(--serif);letter-spacing:-.005em;text-wrap:balance}
+.doc-meta{margin:12px 0 0;display:flex;flex-wrap:wrap;gap:6px 14px;font:11.5px/1 var(--mono);color:var(--ink-3);letter-spacing:.03em}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc h1{font-size:clamp(28px,2.4vw,34px)}
+
+/* 节题 */
+.doc h2{
+  margin:40px 0 14px;font:600 23px/1.35 var(--serif);letter-spacing:0;
+  scroll-margin-top:64px;text-wrap:balance;
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc h2{
+  margin:2.35em 0 .85em;font-size:1.5em;line-height:1.35;
+}
+.doc h2 .h2-no{font:inherit;color:inherit;margin-right:.4em;letter-spacing:inherit;vertical-align:baseline}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc h2 .h2-no{
+  font:600 .58em/1 var(--mono);letter-spacing:.04em;color:var(--accent);
+  margin-right:.55em;vertical-align:.18em;
+}
+
+/* 段落 */
+.doc p{margin:0 0 16px}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc p{margin:0 0 1.15em;text-wrap:pretty}
+html[data-mode="c"] .doc > p:not(.doc-meta):not(.kicker){text-indent:2em;margin-bottom:.18em}
+html[data-mode="c"] .doc > p + .table-wrap{margin-top:2.1em}
+html[data-mode="c"] .doc blockquote p,html[data-mode="c"] .doc td p,html[data-mode="c"] .doc li p{text-indent:0}
+.doc strong{font-weight:600}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc p>strong{color:var(--ink);font-weight:650}
+
+/* 行内代码 */
+.doc code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:1px 4px;border-radius:2px}
+html[data-mode="cur"] .doc code{background:none;padding:0}
+
+/* 引文 */
+.doc blockquote{margin:24px 0;padding:2px 0 2px 20px;border-left:2px solid var(--accent);color:var(--ink-2)}
+.doc blockquote p{margin:0 0 .5em}
+.doc blockquote p:last-child{margin-bottom:0}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc blockquote{
+  margin:1.5em 0;padding:.1em 0 .1em 1.1em;
+  font-family:var(--serif);font-size:1.04em;line-height:1.8;color:var(--ink);
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc blockquote p{margin-bottom:.35em}
+
+/* 列表 */
+.doc ul,.doc ol{margin:0 0 16px;padding-left:1.4em}
+.doc li{margin:2px 0}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc ul{list-style:none;padding-left:0}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc ul>li{position:relative;padding-left:1.25em;margin:.4em 0}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc ul>li::before{
+  content:'';position:absolute;left:.15em;top:.72em;width:5px;height:5px;border:1px solid var(--accent);transform:rotate(45deg);
+}
+
+/* 分隔线：现状是一条灰线，方案里换成刊物的「※」 */
+.doc hr{border:0;border-top:1px solid var(--rule);margin:32px 0}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc hr{
+  border:0;height:auto;margin:2.4em 0;text-align:center;overflow:visible;
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc hr::before{
+  content:'※';display:block;font:400 13px/1 var(--serif);color:var(--accent);opacity:.7;
+}
+
+/* ---- 表格：现状零样式，方案走「横线制表」 ---- */
+.table-wrap{margin:0 0 18px;max-width:100%;overflow-x:auto}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .table-wrap{
+  margin:1.55em 0 1.75em;overflow-x:auto;overscroll-behavior-x:contain;
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc table{
+  width:100%;min-width:520px;border-collapse:collapse;
+  font-size:.83em;line-height:1.65;font-variant-numeric:tabular-nums;
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc thead th{
+  text-align:left;vertical-align:bottom;padding:0 12px 8px 0;
+  font:600 10.5px/1.4 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+  border-bottom:1px solid var(--ink-3);white-space:nowrap;
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc th:first-child,
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc td:first-child{width:26%;padding-right:16px}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc tbody td{
+  padding:11px 12px 11px 0;vertical-align:top;border-bottom:1px solid var(--rule);color:var(--ink-2);
+}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc tbody td:first-child{color:var(--ink)}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc tbody tr:last-child td{border-bottom-color:var(--ink-3)}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 70%,transparent)}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc td code{white-space:nowrap;background:var(--surface-2)}
+html[data-mode="c"] .doc thead th{border-bottom:3px double var(--ink-3)}
+
+/* ---- 代码块：现状继承 1.95 行高，ASCII 图会被拉散 ---- */
+.doc pre{
+  margin:0 0 18px;padding:12px;background:var(--surface-2);border:1px solid var(--rule);
+  border-radius:3px;overflow:auto;font-family:var(--mono);font-size:.82em;line-height:1.55;
+}
+html[data-mode="cur"] .doc pre{font-size:.72em;line-height:1.95;background:transparent;border:0;padding:0}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc pre{
+  position:relative;font-size:12px;line-height:1.62;padding:16px;tab-size:2;
+  background:var(--surface);border:0;border-left:2px solid var(--rule-strong);border-radius:0;
+}
+
+/* ---- 折叠问答 ---- */
+.doc details{margin:0 0 14px;border-bottom:1px solid var(--rule);padding-bottom:10px}
+.doc summary{cursor:pointer;font:600 14px/1.6 var(--sans);color:var(--ink)}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc summary{list-style:none;display:flex;gap:8px;align-items:baseline}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc summary::-webkit-details-marker{display:none}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc summary::before{content:'＋';font:400 12px/1 var(--mono);color:var(--accent);flex:none}
+html:is([data-mode="a"],[data-mode="b"],[data-mode="c"]) .doc details[open] summary::before{content:'－'}
+.doc details p{margin:10px 0 0;font-size:.95em}
+
+/* ---- 脚注（仅方案 C 提案） ---- */
+.fnref{display:none}
+html[data-mode="c"] .fnref{display:inline;font-size:.7em;vertical-align:super;line-height:0;margin-left:2px}
+html[data-mode="c"] .fnref a{color:var(--accent-ink);text-decoration:none;border:0;padding:0 1px}
+.fn-block{display:none;margin-top:36px;padding-top:14px;border-top:1px solid var(--rule)}
+html[data-mode="c"] .fn-block{display:block}
+.fn-block h4{margin:0 0 8px;font:600 10.5px/1 var(--mono);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase}
+.fn-block ol{margin:0;padding-left:1.6em;font-size:12.5px;line-height:1.7;color:var(--ink-2)}
+.fn-block li{margin:4px 0}
+
+/* ---- 文末 ---- */
+.doc-end{margin-top:44px;padding-top:14px;border-top:1px solid var(--rule);display:flex;align-items:baseline;gap:10px;font-size:11.5px;color:var(--ink-3)}
+.doc-end i{font-style:normal;color:var(--accent)}
+
+/* ==========================================================================
+   常驻阅读条
+   ========================================================================== */
+.reader-bar{
+  position:sticky;top:0;z-index:12;display:flex;align-items:center;gap:4px;
+  padding:6px 0 9px;margin-bottom:16px;
+  background:color-mix(in srgb,var(--paper) 90%,transparent);
+  backdrop-filter:blur(10px) saturate(120%);
+  border-bottom:1px solid var(--rule);
+}
+html[data-mode="b"] .reader-bar,html[data-mode="c"] .reader-bar{
+  max-width:calc(var(--measure) + 48px + 230px);
+  margin-inline:auto;margin-bottom:20px;
+}
+.full-bar{display:flex;align-items:center;gap:4px;width:100%;position:relative;flex-wrap:wrap}
+.bar-chapter{font:600 13px/1.4 var(--serif);max-width:22em;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-pct{font:11px/1 var(--mono);color:var(--ink-3);flex:none}
+.bar-spacer{margin-left:auto}
+.bar-btn{padding:4px 8px;border-radius:2px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+.bar-btn:hover{background:var(--surface-2);color:var(--ink)}
+.bar-btn[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
+.bar-progress{position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--rule)}
+.bar-progress i{display:block;height:100%;width:13%;background:var(--accent);transition:width 160ms linear}
+
+/* 方案 B：条只留章节 + 一个 Aa + 一个批注 + 一个更多 */
+.slim-bar{display:none;gap:6px;align-items:center;width:100%;position:relative}
+html[data-mode="b"] .full-bar,html[data-mode="c"] .full-bar{display:none}
+html[data-mode="b"] .slim-bar,html[data-mode="c"] .slim-bar{display:flex}
+.slim-bar .spacer{margin-left:auto}
+.slim-btn{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:2px;font-size:12px;color:var(--ink-2)}
+.slim-btn:hover{background:var(--surface-2);color:var(--ink)}
+.slim-btn.accent{color:var(--accent-ink);font-weight:600}
+
+/* ==========================================================================
+   边注（方案 B/C）
+   ========================================================================== */
+.mnotes{display:none;position:relative}
+html[data-mode="b"] .mnotes,html[data-mode="c"] .mnotes{display:block}
+.mnote{
+  position:absolute;top:0;left:0;width:100%;
+  font-size:12px;line-height:1.62;color:var(--ink-2);
+  padding-left:10px;border-left:1px solid var(--accent-soft);
+  transition:transform 260ms cubic-bezier(.22,.61,.36,1);
+}
+.mnote b{display:block;font:600 10px/1 var(--mono);letter-spacing:.1em;color:var(--accent);margin-bottom:5px}
+.mnote em{font-style:normal;color:var(--ink-3)}
+
+/* 朱砂校样编号 */
+.rp-no{display:none}
+html[data-redpen="1"] .rp{position:relative}
+html[data-redpen="1"] .rp .rp-no{
+  display:block;position:absolute;left:-30px;top:-2px;
+  width:16px;height:16px;border:1px solid var(--accent);border-radius:50%;
+  font:600 9px/15px var(--mono);text-align:center;color:var(--accent);
+}
+html[data-redpen="1"] .rp{outline:1px dashed color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:8px}
+.legend{display:none;gap:10px;align-items:center;font:10.5px/1 var(--mono);color:var(--ink-3);white-space:nowrap}
+html[data-redpen="1"] .legend{display:flex}
+.legend b{color:var(--accent);font-weight:600;margin-right:3px}
+
+/* AI 药丸：现状有，方案收进边条 */
+.ai-fab{
+  position:fixed;right:22px;bottom:22px;z-index:25;height:36px;padding:0 15px;
+  border-radius:999px;background:var(--ink);color:var(--paper);border:1px solid var(--ink);
+  font-size:12.5px;display:inline-flex;align-items:center;gap:6px;
+}
+html[data-mode="b"] .ai-fab,html[data-mode="c"] .ai-fab{opacity:0;pointer-events:none;transform:translateY(6px)}
+.ai-fab{transition:opacity 160ms,transform 160ms}
+
+/* ==========================================================================
+   窄屏
+   ========================================================================== */
+@media (max-width:1180px){
+  .stage{grid-template-columns:216px minmax(0,1fr)}
+  .side{display:none}
+  html[data-mode="b"] .flow,html[data-mode="c"] .flow{grid-template-columns:minmax(0,1fr);padding-right:0}
+  .mnotes{display:none!important}
+}
+@media (max-width:880px){
+  html .stage,html[data-mode="b"] .stage,html[data-mode="c"] .stage{grid-template-columns:minmax(0,1fr);padding:0 18px}
+  .toc{display:none}
+  .proof-name span{display:none}
+  .ruler{gap:12px}
+  .tools .tool-label{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+
+<header class="proofbar">
+  <span class="seal" aria-hidden="true">校</span>
+  <div class="proof-name">
+    <b>阅读面校样</b>
+    <span>habitat / reader</span>
+  </div>
+
+  <div class="seg" role="group" aria-label="对照模式">
+    <button data-mode="cur" aria-pressed="true">现状 <em>0</em></button>
+    <button data-mode="a" aria-pressed="false">A 校准 <em>1</em></button>
+    <button data-mode="b" aria-pressed="false">B 重构 <em>2</em></button>
+    <button data-mode="c" aria-pressed="false">C 纸刊 <em>3</em></button>
+  </div>
+
+  <div class="tools">
+    <span class="tool">
+      <span class="tool-label">字号</span>
+      <button class="tbtn" id="fs-down" aria-label="减小字号" disabled>−</button>
+      <button class="tbtn" id="fs-up" aria-label="增大字号" disabled>＋</button>
+    </span>
+    <span class="divider" aria-hidden="true"></span>
+    <span class="tool" role="group" aria-label="行宽">
+      <span class="tool-label">行宽</span>
+      <button class="tbtn wide" data-chars="30" aria-pressed="false" disabled>窄</button>
+      <button class="tbtn wide" data-chars="34" aria-pressed="true" disabled>中</button>
+      <button class="tbtn wide" data-chars="40" aria-pressed="false" disabled>宽</button>
+    </span>
+    <span class="divider" aria-hidden="true"></span>
+    <span class="tool">
+      <span class="tool-label">纸</span>
+      <button class="tbtn wide" id="theme-btn" aria-pressed="false">玄墨</button>
+      <button class="tbtn" id="redpen-btn" aria-pressed="false" aria-label="显示校样编号" title="显示校样编号">红</button>
+    </span>
+  </div>
+</header>
+
+<div class="ruler" aria-label="排版参数实测">  <span class="metric" id="m-size"><span>字号</span><b>17.0</b><u>px</u></span>
+  <span class="metric" id="m-chars"><span>行长</span><b>38.4</b><u>字</u></span>
+  <span class="metric" id="m-lh"><span>行高</span><b>1.95</b><u>×</u></span>
+  <span class="metric" id="m-gap"><span>段距</span><b>0.94</b><u>em</u></span>
+  <span class="metric" id="m-pad"><span>表元内距</span><b>1</b><u>px</u></span>
+  <span class="legend" aria-hidden="true">
+    <span><b>1</b>章题</span><span><b>2</b>节题</span><span><b>3</b>正文</span>
+    <span><b>4</b>表格</span><span><b>5</b>引文</span><span><b>6</b>代码</span>
+  </span>
+  <span class="ruler-sum" id="m-sum">越界 <b>2</b> 项</span>
+</div>
+
+<main class="stage">
+  <nav class="toc" aria-label="章节">
+    <div class="toc-head">
+      <div class="toc-title">Harness 设计调研书</div>
+      <div class="toc-sub">22 章 · <span class="only-cur">读 13%</span><span class="only-b">13 / 100</span></div>
+    </div>
+    <div class="toc-list" id="tocList"></div>
+    <div class="toc-foot">
+      <span class="only-cur">当前 13%</span>
+      <span class="only-cur">最远 13%</span>
+      <span class="only-b">13% · 第 1 章</span>
+    </div>
+  </nav>
+
+  <div class="scroll" id="scroll">
+    <div class="reader-bar">
+      <!-- 现状 / A：八件套常驻 -->
+      <div class="full-bar">
+        <span class="bar-chapter">01 什么是 Harness</span>
+        <span class="bar-pct">13%</span>
+        <span class="bar-spacer"></span>
+        <span role="group" aria-label="行宽">
+          <button class="bar-btn">窄</button>
+          <button class="bar-btn" aria-pressed="true">中</button>
+          <button class="bar-btn">宽</button>
+        </span>
+        <button class="bar-btn">标记读完</button>
+        <button class="bar-btn">衍生</button>
+        <button class="bar-btn">问</button>
+        <button class="bar-btn">批注</button>
+        <span class="bar-progress" aria-hidden="true"><i></i></span>
+      </div>
+      <!-- 方案 B / C：三件 -->
+      <div class="slim-bar">
+        <span class="bar-chapter">1 什么是 Harness</span>
+        <span class="spacer"></span>
+        <button class="slim-btn">Aa</button>
+        <button class="slim-btn">⋯</button>
+        <button class="slim-btn accent">批注</button>
+        <span class="bar-progress" aria-hidden="true"><i style="width:13%"></i></span>
+      </div>
+    </div>
+
+    <div class="flow">
+      <article class="doc" id="doc">
+        <header class="doc-head rp" data-rp="1">
+          <p class="kicker">Harness 设计调研书 · 第 1 章</p>
+          <h1>什么是 Harness</h1>
+          <p class="doc-meta"><span>1,842 字</span><span>约 7 分钟</span><span>2026-10-29</span></p>
+          <span class="rp-no">1</span>
+        </header>
+
+        <h2 id="s11" class="rp" data-rp="2"><span class="h2-no">1.1</span>一个被滥用的词
+          <span class="rp-no">2</span></h2>
+
+        <p class="rp" data-rp="3">「Harness」原本是马具，引申为「把动力约束成可用功的装置」。在 AI 工程里，这个词在 2025 年下半年开始流行，但用法混乱。常见的三种误读：
+          <span class="rp-no">3</span></p>
+
+        <div class="table-wrap rp" data-rp="4">
+          <table>
+            <thead><tr><th>误读</th><th>说法</th><th>为什么错</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>误读一：Harness = 提示词模板</strong></td>
+                <td>“我们的 harness 就是那套 system prompt”</td>
+                <td>提示词是<strong>内容</strong>，Harness 是<strong>承载内容的机器</strong>。换一套 prompt 不叫换 harness</td>
+              </tr>
+              <tr>
+                <td><strong>误读二：Harness = Agent 框架</strong></td>
+                <td>“我们用 LangGraph，所以有 harness 了”</td>
+                <td>框架提供<strong>编排原语</strong>；Harness 提供<strong>已组装好的运行时</strong>。LangGraph 是零件箱，Claude Code 是整车</td>
+              </tr>
+              <tr>
+                <td><strong>误读三：Harness = 模型外壳</strong></td>
+                <td>“就是套在模型外面的壳”</td>
+                <td>“壳”暗示被动。Harness 是主动的：它决定模型<strong>看到什么、能做什么、做完算什么</strong></td>
+              </tr>
+            </tbody>
+          </table>
+          <span class="rp-no">4</span>
+        </div>
+
+        <p>一个更准确的说法：</p>
+
+        <blockquote class="rp" data-rp="5">
+          <p><strong>Harness 是把「模型的一次次 token 生成」转换成「一件可交付、可恢复、可审计的工作」的运行时系统。</strong></p>
+          <span class="rp-no">5</span>
+        </blockquote>
+
+        <p>注意这句话里有四个承诺，每一个都是一票否决项：<strong>可交付</strong>（有终止与验收）、<strong>可恢复</strong>（崩了能续）、<strong>可审计</strong>（每步有据可查）、<strong>运行时</strong>（不是文档，是跑起来的进程）。</p>
+
+        <hr>
+
+        <h2 id="s12"><span class="h2-no">1.2</span>五条判据：什么算 Harness</h2>
+
+        <p>判断一个东西是不是 Harness，用下面五条。<strong>五条全中才是</strong>，中三条只能叫「Agent 脚手架」。<sup class="fnref" id="r1"><a href="#fn1">1</a></sup></p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>判据</th><th>具体问法</th><th>反例</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>C1</strong> 自有循环</td>
+                <td>它自己决定“再想一轮”还是“收工”，还是把控制权交回调用方？</td>
+                <td>单次 <code>chat.completions</code> 封装、一次 RAG 问答链</td>
+              </tr>
+              <tr>
+                <td><strong>C2</strong> 工具执行闭环</td>
+                <td>工具结果是否<strong>回灌</strong>进下一轮上下文，并可能改变后续决策？</td>
+                <td>Function calling 只返回给前端渲染，不进模型</td>
+              </tr>
+              <tr>
+                <td><strong>C3</strong> 上下文生命周期</td>
+                <td>有没有预算、裁剪、压缩、卸载、重建？还是把历史无限拼接？</td>
+                <td>简单 <code>messages.append()</code> 的聊天机器人</td>
+              </tr>
+              <tr>
+                <td><strong>C4</strong> 权限与执行边界</td>
+                <td>有没有“这一步能不能做”的判断，以及做在哪（本机 / 容器 / 远端）？</td>
+                <td>直接 <code>exec()</code> 任意命令，无审批无沙箱</td>
+              </tr>
+              <tr>
+                <td><strong>C5</strong> 状态可恢复</td>
+                <td>进程被杀后，能否从某个检查点继续，且不重复副作用？</td>
+                <td>内存态会话，重启即失忆</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>用这五条去卡，会得到一个反直觉的结论：<strong>很多自称 Agent 的产品其实是“带工具的聊天”</strong>（缺 C1/C5），而<strong>很多自称“CLI 工具”的其实是完整 Harness</strong>（Codex CLI、Claude Code、Gemini CLI 五条全中）。</p>
+
+        <blockquote>
+          <p><strong>面试可用的一句话</strong>：判断是不是 Harness，不看它有没有“Agent”字样，看它有没有“循环 + 回灌 + 上下文预算 + 执行边界 + 可恢复状态”这五件套。</p>
+        </blockquote>
+
+        <hr>
+
+        <h2 id="s13"><span class="h2-no">1.3</span>五个概念的边界</h2>
+
+        <p>这是最容易混淆的一组。用「谁决定控制流」和「是否已组装」两个轴来切：</p>
+
+        <pre class="rp" data-rp="6">                已组装（开箱即用）
+                      ▲
+                      │
+     Claude Code      │      Codex CLI
+     Gemini CLI       │      DeepSeek Harness
+ ─────────────────────┼───────────────────────►
+ 库 / 零件            │                  平台 / 服务
+ LangGraph            │      AgentCore / Foundry
+ LlamaIndex           │      Vertex Agent Engine
+                      │
+                未组装（需自己搭）<span class="rp-no">6</span></pre>
+
+        <details>
+          <summary>Q1. 一个只有 function calling、把工具结果返回给前端渲染的系统，缺哪几条判据？</summary>
+          <p>缺 <strong>C2（工具结果回灌）</strong> 是致命的：结果只给前端渲染，模型看不到自己做了什么，无法基于结果做下一步决策。连带缺 C3、C4、C5，只剩 C1 的一半——有调用，但没闭环。</p>
+        </details>
+
+        <div class="fn-block" id="fn1">
+          <h4>注</h4>
+          <ol>
+            <li>「五条全中」是本人在通读六个产品实现后的判定，不是行业标准；可作为面试讨论的起点，不宜当作定义引用。 <a href="#r1">↩</a></li>
+          </ol>
+        </div>
+
+        <div class="doc-end"><i>※</i><span>读到这里。回看不会把最远位置清掉。</span></div>
+      </article>
+
+      <aside class="mnotes" id="mnotes" aria-label="边注">
+        <div class="mnote" data-anchor="s11">
+          <b>批注 01</b>
+          「承载内容的机器」这个说法可以直接复用，比“运行时”更容易讲清。
+        </div>
+        <div class="mnote" data-anchor="s12">
+          <b>批注 02</b>
+          C2 的回灌判据，和后面第 6 章的工具管线是一件事的两面。
+        </div>
+        <div class="mnote" data-anchor="s13">
+          <b>批注 03</b>
+          <em>待查：</em>这张轴图的横轴是“控制流归属”，纵轴是“是否已组装”，两者并不正交。
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <aside class="side" aria-label="批注与血缘">
+    <h3>批注 <span>0 条</span></h3>
+    <p class="empty">选中正文就能划重点、写批注。批注会记在事件流里，可追溯。</p>
+    <h3>血缘 <span>7 条</span></h3>
+    <button class="lineage">R1 Codex 源码取证笔记<i>12 项</i></button>
+    <button class="lineage">R2 DeepSeek Harness 源码笔记<i>1 项</i></button>
+    <button class="lineage">R3 星河项目拆解笔记<i>14 项</i></button>
+    <button class="lineage">R4 Claude Code 与第二梯队调研笔记<i>6 项</i></button>
+    <button class="lineage">R5 WorkBuddy 核心取证<i>8 项</i></button>
+    <button class="lineage">R6 WorkBuddy 工具权限<i>5 项</i></button>
+    <button class="lineage">R7 Qoder CN 逆向取证笔记<i>3 项</i></button>
+  </aside>
+</main>
+
+<button class="ai-fab" aria-label="问助手">
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8 6.4 6.4Z" fill="currentColor"/></svg>
+  静
+</button>
+
+<script>
+(function(){
+  const root = document.documentElement;
+  const doc = document.getElementById('doc');
+  const scroll = document.getElementById('scroll');
+
+  /* ---------- 目录 ---------- */
+  const chapters = [
+    ['01','什么是 Harness'],['02','Harness 的通用解剖'],['03','执行循环：Task/Turn/Step'],
+    ['04','上下文工程：预算、压缩、卸载'],['05','记忆体系：从会话内到跨会话'],
+    ['06','工具系统：schema、并发、结果截断'],['07','权限、沙箱与人类在环'],
+    ['08','子代理与多 Agent 协同'],['09','持久化、回放与可观测性'],
+    ['10','Codex 深度：Rust 的分层'],['11','Claude Code 深度：产物与被压扁的抽象'],
+    ['12','DeepSeek Harness 深度'],['13','第二梯队：六种不同答案'],
+    ['14','横向对比矩阵：12 维'],['15','星河项目对照分析'],
+    ['16','工程权衡与最佳实践'],['17','笔面试题库：120 题四阶'],
+    ['18','能力自查与认证对标'],['19','12b WorkBuddy 深度：ACP 与四型上下文'],
+    ['20','21c Qoder CN 深度：Gemini 血统'],['21','附录 A 术语表：48 条'],['22','附录 B 索引']
+  ];
+  const sections = [['s11','1.1 一个被滥用的词'],['s12','1.2 五条判据'],['s13','1.3 五个概念的边界']];
+  const list = document.getElementById('tocList');
+  list.innerHTML = chapters.map(([no,label],i)=>{
+    const active = i===0;
+    const sub = i===0 ? '<div class="toc-sub2">'+sections.map(([id,t])=>
+      `<a href="#${id}" data-cur="${id==='s11'?'1':'0'}">${t}</a>`).join('')+'</div>' : '';
+    return `<button class="toc-item" aria-current="${active}"><span class="toc-no">${no}</span><span class="toc-label">${label}</span>${active?'<span class="toc-count">8</span>':''}</button>${sub}`;
+  }).join('');
+
+  /* ---------- 模式 ---------- */
+  const segBtns = [...document.querySelectorAll('.seg button')];
+  const fsBtns = [document.getElementById('fs-down'), document.getElementById('fs-up')];
+  const charBtns = [...document.querySelectorAll('[data-chars]')];
+  const themeBtn = document.getElementById('theme-btn');
+  const redpenBtn = document.getElementById('redpen-btn');
+  let fontSize = 17, chars = 34;
+
+  function setMode(m){
+    root.dataset.mode = m;
+    segBtns.forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.mode===m)));
+    const editable = m !== 'cur';
+    fsBtns.forEach(b=>b.disabled = !editable);
+    charBtns.forEach(b=>b.disabled = !editable);
+    if(!editable) scroll.scrollTop = 0;
+    requestAnimationFrame(()=>{ placeNotes(); measure(); });
+  }
+  segBtns.forEach(b=>b.addEventListener('click', ()=>setMode(b.dataset.mode)));
+
+  function applySize(){
+    root.style.setProperty('--body-size', fontSize+'px');
+    root.style.setProperty('--chars', chars);
+    charBtns.forEach(b=>b.setAttribute('aria-pressed', String(Number(b.dataset.chars)===chars)));
+    requestAnimationFrame(()=>{ placeNotes(); measure(); });
+  }
+  fsBtns[0].addEventListener('click', ()=>{ fontSize = Math.max(15, fontSize-1); applySize(); });
+  fsBtns[1].addEventListener('click', ()=>{ fontSize = Math.min(20, fontSize+1); applySize(); });
+  charBtns.forEach(b=>b.addEventListener('click', ()=>{ chars = Number(b.dataset.chars); applySize(); }));
+
+  themeBtn.addEventListener('click', ()=>{
+    const dark = root.dataset.theme === 'xuanmo';
+    root.dataset.theme = dark ? 'ningzhi' : 'xuanmo';
+    themeBtn.textContent = dark ? '玄墨' : '凝脂';
+    themeBtn.setAttribute('aria-pressed', String(!dark));
+  });
+  redpenBtn.addEventListener('click', ()=>{
+    const on = root.dataset.redpen === '1';
+    if(on) delete root.dataset.redpen; else root.dataset.redpen = '1';
+    redpenBtn.setAttribute('aria-pressed', String(!on));
+  });
+
+  /* ---------- 边注对齐 ---------- */
+  function placeNotes(){
+    const host = document.getElementById('mnotes');
+    if(!host) return;
+    const mode = root.dataset.mode;
+    if(mode !== 'b' && mode !== 'c') return;
+    const base = host.getBoundingClientRect().top;
+    host.querySelectorAll('.mnote').forEach(n=>{
+      const a = document.getElementById(n.dataset.anchor);
+      if(!a) return;
+      const y = a.getBoundingClientRect().top - base + 6;
+      n.style.transform = 'translateY(' + Math.max(0, Math.round(y)) + 'px)';
+    });
+  }
+
+  /* ---------- 量尺 ---------- */
+  const mEls = {
+    size: document.getElementById('m-size'),
+    chars: document.getElementById('m-chars'),
+    lh: document.getElementById('m-lh'),
+    gap: document.getElementById('m-gap'),
+    pad: document.getElementById('m-pad')
+  };
+  const sumEl = document.getElementById('m-sum');
+
+  function measure(){
+    const p = doc.querySelector('#s11 + p') || doc.querySelector('p:not(.kicker):not(.doc-meta)');
+    if(!p) return;
+    const cs = getComputedStyle(p);
+    const fs = parseFloat(cs.fontSize);
+    const lh = parseFloat(cs.lineHeight)/fs;
+    const gap = parseFloat(cs.marginBottom)/fs;
+    const width = p.getBoundingClientRect().width;
+    const perLine = width/fs;
+    const td = doc.querySelector('td');
+    const pad = td ? parseFloat(getComputedStyle(td).paddingTop) : 0;
+
+    mEls.size.querySelector('b').textContent = fs.toFixed(1);
+    mEls.chars.querySelector('b').textContent = perLine.toFixed(1);
+    mEls.lh.querySelector('b').textContent = lh.toFixed(2);
+    mEls.gap.querySelector('b').textContent = gap.toFixed(2);
+    mEls.pad.querySelector('b').textContent = Math.round(pad);
+
+    const book = root.dataset.mode === 'c';
+    const gapOk = book ? (gap >= 0.1 && gap <= 0.6) : (gap >= 0.9 && gap <= 1.7);
+    const checks = [
+      [mEls.size, fs>=16 && fs<=19],
+      [mEls.chars, perLine>=30 && perLine<=40],
+      [mEls.lh, lh>=1.55 && lh<=1.85],
+      [mEls.gap, gapOk],
+      [mEls.pad, pad>=8]
+    ];
+    let bad = 0;
+    checks.forEach(([el,ok])=>{ el.dataset.state = ok?'ok':'warn'; if(!ok) bad++; });
+    sumEl.innerHTML = bad ? '越界 <b>'+bad+'</b> 项' : '全部在带内';
+  }
+
+  let raf = 0;
+  function schedule(){ cancelAnimationFrame(raf); raf = requestAnimationFrame(()=>{ placeNotes(); measure(); }); }
+  window.addEventListener('resize', schedule);
+  scroll.addEventListener('scroll', ()=>{
+    const max = scroll.scrollHeight - scroll.clientHeight;
+    const p = max > 0 ? scroll.scrollTop / max : 0;
+    document.querySelectorAll('.bar-progress i').forEach(i=>{ i.style.width = (p*100).toFixed(1) + '%'; });
+    document.querySelectorAll('.bar-pct').forEach(el=>{ el.textContent = Math.round(p*100) + '%'; });
+    const line = scroll.scrollTop + 96;
+    let active = 's11';
+    for(const id of ['s11','s12','s13']){
+      const el = document.getElementById(id);
+      if(el && el.offsetTop <= line) active = id;
+    }
+    document.querySelectorAll('.toc-sub2 a').forEach(a=>{
+      a.dataset.cur = a.getAttribute('href') === '#' + active ? '1' : '0';
+    });
+  }, {passive:true});
+  document.addEventListener('toggle', schedule, true);
+  if(window.ResizeObserver) new ResizeObserver(schedule).observe(doc);
+
+  /* 键盘 0-3 切模式，F 红笔 */
+  document.addEventListener('keydown', (e)=>{
+    if(e.metaKey||e.ctrlKey||e.altKey) return;
+    const map = {'0':'cur','1':'a','2':'b','3':'c'};
+    if(map[e.key]){ setMode(map[e.key]); }
+    if(e.key==='f'||e.key==='F'){ redpenBtn.click(); }
+  });
+
+  setMode('cur');
+})();
+</script>
+</body>
+</html>
