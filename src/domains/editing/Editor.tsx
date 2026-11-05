@@ -55,7 +55,17 @@ export function EditorPage({ repId, noteId }: { repId?: string; noteId?: string 
   const [raw, setRaw] = useState('');
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<'split' | 'source' | 'preview'>('split');
+  // 记住上次选的视图：短笔记用分栏其实是在浪费半屏，长笔记又必须分栏
+  const [view, setView] = useState<'split' | 'source' | 'preview'>(() => {
+    const v = localStorage.getItem('habitat.editorView');
+    return v === 'source' || v === 'preview' || v === 'split' ? v : 'split';
+  });
+  const pickView = (v: 'split' | 'source' | 'preview') => {
+    setView(v);
+    try { localStorage.setItem('habitat.editorView', v); } catch { /* 隐私模式 */ }
+  };
+  // 写正文时不该被 13 行 frontmatter 挤在屏幕下半截：默认只显示正文，要看原文再展开
+  const [showFm, setShowFm] = useState(false);
   // 「我打开时看到的那一份」。保存时当基准回传，服务端据此判断有没有人抢先改过。
   const [base, setBase] = useState<{ rev?: number; hash?: string; content?: string }>({});
 
@@ -68,6 +78,13 @@ export function EditorPage({ repId, noteId }: { repId?: string; noteId?: string 
   }, [data?.rep.id, data?.content, data?.hash]);
 
   const parsed = useMemo(() => splitDoc(raw), [raw]);
+  /** 含分隔符的 frontmatter 原文；收起时把它拼回 textarea 之前 */
+  const fmBlock = useMemo(() => {
+    const m = /^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/.exec(raw);
+    return m ? m[0] : '';
+  }, [raw]);
+  const bodyOnly = raw.slice(fmBlock.length);
+  const fmCount = parsed.rawFmKeys.length;
   const locked = !!data?.locked;
   const unknown = parsed.rawFmKeys.filter((k) => !FORM_FIELDS.includes(k as never) && !['id', 'type', 'schema', 'spaceId', 'createdAt', 'updatedAt', 'author', 'sensitivity', 'rev', 'repId', 'partId'].includes(k));
 
@@ -174,18 +191,27 @@ ${r.markdown}
       <header className="editor-head">
         <div className="editor-ident">
           <p className="eyebrow">知识 · 编辑</p>
-          <h1 className="editor-title">{title}</h1>
+          {locked ? (
+            <h1 className="editor-title">{title}</h1>
+          ) : (
+            <input
+              className="editor-title editor-title-input"
+              value={parsed.fm.title ?? ''}
+              placeholder={title}
+              aria-label="标题"
+              data-testid="editor-title"
+              onChange={(e) => patch('title', e.target.value)}
+            />
+          )}
           <div className="editor-path mono" title={data.rep.path}>{data.rep.path}</div>
         </div>
 
         <div className="editor-actions">
           {locked && <Chip tone="warn" data-testid="editor-locked-chip">入库原件 · 只读</Chip>}
-          {dirty && !locked && <Chip tone="danger">未保存</Chip>}
-          {dirty && <span className="editor-dot" aria-hidden="true" />}
 
           <div className="seg" role="group" aria-label="视图">
             {([['source', '源码'], ['split', '分栏'], ['preview', '预览']] as const).map(([v, label]) => (
-              <button key={v} className="seg-item" aria-pressed={view === v} onClick={() => setView(v)}>{label}</button>
+              <button key={v} className="seg-item" aria-pressed={view === v} onClick={() => pickView(v)}>{label}</button>
             ))}
           </div>
 
@@ -205,9 +231,15 @@ ${r.markdown}
             </label>
           )}
           {!locked && (
-            <button className="btn btn-sm btn-primary" onClick={() => void save()} disabled={!dirty || busy} data-testid="editor-save">
-              {busy ? '保存中…' : '保存'}
-              <kbd className="kbd">⌘S</kbd>
+            <button
+              className={`btn btn-sm ${dirty ? 'btn-primary' : 'btn-quiet'}`}
+              onClick={() => void save()}
+              disabled={!dirty || busy}
+              data-testid="editor-save"
+              title={dirty ? '有未保存的改动' : '已保存'}
+            >
+              {busy ? '保存中…' : dirty ? '保存' : '已保存'}
+              {dirty ? <kbd className="kbd">⌘S</kbd> : <Icon name="check" size={12} />}
             </button>
           )}
         </div>
@@ -226,16 +258,29 @@ ${r.markdown}
       <div className="editor-panes" data-view={view}>
         <section className="pane" aria-label="源码">
           <div className="pane-head">
-            <span>源码</span>
-            <span className="pane-meta mono">{lines} 行 · Markdown</span>
+            <span>正文</span>
+            <button
+              className="pane-toggle mono"
+              onClick={() => setShowFm((v) => !v)}
+              aria-pressed={showFm}
+              data-testid="editor-toggle-fm"
+              title={showFm ? '收起元数据，只看正文' : '展开 frontmatter 原文'}
+            >
+              {showFm ? '收起元数据' : `元数据 ${fmCount} 项`}
+            </button>
+            <span className="pane-meta mono">{(showFm ? raw : bodyOnly).split('\n').length} 行</span>
           </div>
           <textarea
             className="editor-source"
-            value={raw}
+            value={showFm ? raw : bodyOnly}
             readOnly={locked}
             spellCheck={false}
             data-testid="editor-source"
-            onChange={(e) => { setRaw(e.target.value); setDirty(true); }}
+            onChange={(e) => {
+              const v = e.target.value;
+              setRaw(showFm ? v : fmBlock + v);
+              setDirty(true);
+            }}
           />
         </section>
 

@@ -2375,3 +2375,36 @@ input[type='checkbox']:hover { border-color: var(--text-2); }
 .notif:first-of-type { border-top: 0; }
 .notif + .notif { margin-top: 2px; }
 .notif:hover { background: var(--surface); }
+
+/* ==========================================================================
+   编辑器：写作动线
+   --------------------------------------------------------------------------
+   一、标题就地可改，不用滚到页面底部找「标题」字段
+   二、正文默认不显示 frontmatter（13 行 YAML 曾把正文挤到屏幕下半截）
+   三、保存状态写在按钮上：有改动才变实心，没改动就是「已保存 ✓」
+   ========================================================================== */
+.editor-title-input {
+  display: block; width: 100%;
+  padding: 2px 0; border: 0; border-radius: 0;
+  background: transparent; color: var(--text);
+  font-family: var(--font-display); font-size: 1.75rem; font-weight: 600;
+  letter-spacing: -.01em; line-height: 1.15;
+  outline: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--dur);
+}
+.editor-title-input:hover { border-bottom-color: var(--rule); }
+.editor-title-input:focus { border-bottom-color: var(--text-3); }
+.editor-title-input::placeholder { color: var(--text-3); font-weight: 500; }
+
+/* 栏头里的小开关：元数据 N 项 */
+.pane-toggle {
+  margin-left: auto; padding: 0;
+  border: 0; background: none; cursor: pointer;
+  color: var(--text-3); font-size: var(--t-micro);
+  letter-spacing: .04em; text-transform: none;
+  transition: color var(--dur);
+}
+.pane-toggle:hover { color: var(--accent-ink); }
+.pane-toggle[aria-pressed='true'] { color: var(--accent-ink); }
+.pane-head .pane-meta { margin-left: 10px; }
