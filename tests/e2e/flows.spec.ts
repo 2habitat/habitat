@@ -552,14 +552,14 @@ test('今天页：未来任务进「更远」，能一键挪到今天', async ({
   });
 
   await later.locator('[data-testid="upcoming-today"]').first().click();
-  // 提交要经过 propose → validate → commit → 重扫，慢一点也别抢跑
-  await page.waitForTimeout(2600);
-
-  const todayCountAfter = await page.evaluate(async () => {
-    const r = await (await fetch('/api/today')).json();
-    return r.actions.length;
-  });
-  expect(todayCountAfter).toBe(todayCountBefore + 1);
+  // 提交要经过 propose → validate → commit → 重扫。用固定 sleep 等它，机器一忙就偶发失败；
+  // 改成轮询：条件成立就立刻过，不成立才等到超时。
+  await expect
+    .poll(async () => page.evaluate(async () => {
+      const r = await (await fetch('/api/today')).json();
+      return r.actions.length;
+    }), { timeout: 12000, intervals: [300, 600, 900, 1200] })
+    .toBe(todayCountBefore + 1);
 
   // 挪过之后它不该再挂在「更远」里
   await expect(page.locator('[data-testid="upcoming-row"]', { hasText: '整理迁移脚本' })).toHaveCount(0);
