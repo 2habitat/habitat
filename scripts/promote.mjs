@@ -75,19 +75,27 @@ function snapshot() {
 
 async function health(timeoutMs = 60_000) {
   const t0 = Date.now();
+  let wrong = '';
   while (Date.now() - t0 < timeoutMs) {
     try {
       const r = await fetch(HEALTH);
       if (r.ok) {
         const j = await r.json();
-        if (j.ok) return j;
+        // 只认 habitat 自己。旧看板 kb.py 也回 ok:true，光看 ok 会被骗过去，
+        // 以为服务换上新代码了，其实是端口还被上一个服务占着（2026-11-05 踩过）。
+        if (j.ok && j.service === 'habitat') return j;
+        wrong = j.service ? `应答方是 ${j.service}（version ${j.version ?? '?'}）` : '应答里没有 service 字段';
       }
     } catch {
       /* 还没起来 */
     }
     await new Promise((r) => setTimeout(r, 1500));
   }
-  throw new Error(`健康检查超时（${HEALTH}）`);
+  throw new Error(
+    wrong
+      ? `健康检查超时（${HEALTH}）：${wrong}，不是 habitat。多半是端口被旧服务占着`
+      : `健康检查超时（${HEALTH}）`,
+  );
 }
 
 function restart() {
