@@ -90,7 +90,7 @@ test('书架：展开作品 → 打开章节 → 正文渲染出来', async ({ p
   await noCrash(page);
 });
 
-test('阅读：选中正文 → 工具条 → 批注 → 右栏出现', async ({ page }) => {
+test('阅读：选中正文 → 工具条 → 批注 → 边注出现', async ({ page }) => {
   await goto(page, 'shelf');
   await page.locator('[data-testid="work-read"]').first().click();
   await page.waitForTimeout(600);
@@ -118,6 +118,35 @@ test('阅读：选中正文 → 工具条 → 批注 → 右栏出现', async ({
   await page.locator('[data-testid="work-read"]').first().click();
   await page.waitForTimeout(700);
   await expect(page.locator('text=E2E 写的批注').first()).toBeVisible();
+
+  // 批注包在文本节点上：inline 的 <mark> 里不能出现整段 <p>
+  const marks = page.locator('[data-testid="reader-body"] mark.ann-mark');
+  expect(await marks.count()).toBeGreaterThanOrEqual(2);
+  await expect(page.locator('[data-testid="reader-body"] mark.ann-mark p')).toHaveCount(0);
+});
+
+test('阅读：Aa 面板能改行宽与字体，写进 <html> 并立刻生效', async ({ page }) => {
+  await goto(page, 'shelf');
+  await page.locator('[data-testid="work-read"]').first().click();
+  await page.waitForTimeout(600);
+
+  await page.click('[data-testid="reader-aa"]');
+  await page.click('[data-testid="reading-narrow"]');
+  await page.getByRole('button', { name: '宋', exact: true }).click();
+
+  await expect(page.locator('html')).toHaveAttribute('data-reading', 'narrow');
+  await expect(page.locator('html')).toHaveAttribute('data-reader-font', 'serif');
+
+  const box = await page.evaluate(() => {
+    const p = document.querySelector('[data-testid="reader-body"] p');
+    if (!p) throw new Error('没有段落');
+    const cs = getComputedStyle(p);
+    return { width: Math.round(p.getBoundingClientRect().width), size: parseFloat(cs.fontSize), font: cs.fontFamily };
+  });
+  // 窄档是 30 字，17px 字号下约 510px；不能退回默认的 34 字
+  expect(box.width).toBeGreaterThan(400);
+  expect(box.width).toBeLessThan(box.size * 32);
+  expect(box.font).toContain('Serif');
 });
 
 /* ---------------- 5. 原件只读 ---------------- */
