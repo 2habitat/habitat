@@ -8,16 +8,14 @@
  * 两栏纸面并排，元数据收在下面。⌘S 保存、有改动关页会拦一下。
  */
 import { useEffect, useMemo, useState } from 'react';
-import MarkdownIt from 'markdown-it';
 import { Card, Chip, Empty, PageSkeleton, Field, ErrorBox } from '../../components/ui.tsx';
 import { Icon } from '../../components/icons.tsx';
 import { useRep, useRefresh } from '../../services/use.ts';
 import { endpoints, ApiError } from '../../services/api.ts';
+import { renderMarkdown } from '../../services/markdown.ts';
 import { useUi } from '../../app/ui.ts';
 import { navigate } from '../../app/router.ts';
 import { NOTE_STATUS } from '../../app/labels.ts';
-
-const md = new MarkdownIt({ html: true, linkify: true });
 
 interface Parsed { fm: Record<string, string>; body: string; rawFmKeys: string[] }
 
@@ -287,12 +285,12 @@ ${r.markdown}
         <section className="pane" aria-label="预览">
           <div className="pane-head">
             <span>预览</span>
-            <span className="pane-meta mono">衬线 · 行宽跟随阅读设置</span>
+            <span className="pane-meta mono">跟随阅读设置</span>
           </div>
           <div
             className="prose editor-preview"
             data-testid="editor-preview"
-            dangerouslySetInnerHTML={{ __html: md.render(parsed.body) }}
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(parsed.body) }}
           />
         </section>
       </div>

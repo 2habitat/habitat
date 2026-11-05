@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { openPeek as navOpenPeek, closePeek as navClosePeek } from './router.ts';
 
 export type Theme = 'ningzhi' | 'piaoqing' | 'xuanmo';
+export type ReaderFont = 'serif' | 'sans';
 export type SheetKind =
   | 'capture' | 'derive' | 'annotate' | 'task' | 'event' | 'project'
   | 'review' | 'conflict' | 'journal' | 'proposal' | 'notifications' | null;
@@ -29,6 +30,12 @@ interface UiState {
   drawer: boolean;
   /** 阅读行宽，方案要求「可调」 */
   readingWidth: 'narrow' | 'normal' | 'wide';
+  /** 正文字号（px），Aa 面板可调；行宽会跟着字号一起缩放 */
+  readerSize: number;
+  /** 正文字体：黑体（默认）/ 宋体 */
+  readerFont: ReaderFont;
+  /** 段首缩进 2em：中文书籍习惯，默认关 */
+  readerIndent: boolean;
   /** 书架默认展示：封面墙还是紧凑列表 */
   shelfView: 'grid' | 'list';
   aiOpen: boolean;
@@ -43,6 +50,9 @@ interface UiState {
   toggleCollapsed: () => void;
   setDrawer: (v: boolean) => void;
   setReadingWidth: (w: 'narrow' | 'normal' | 'wide') => void;
+  setReaderSize: (n: number) => void;
+  setReaderFont: (f: ReaderFont) => void;
+  setReaderIndent: (v: boolean) => void;
   setShelfView: (v: 'grid' | 'list') => void;
   openAi: (ctx?: Partial<AiContext>) => void;
   closeAi: () => void;
@@ -64,11 +74,14 @@ const saved = (() => {
   }
 })();
 
-function persist(s: Pick<UiState, 'theme' | 'fontSize' | 'radius' | 'collapsed' | 'readingWidth' | 'shelfView'>): void {
+function persist(s: Pick<UiState,
+  'theme' | 'fontSize' | 'radius' | 'collapsed' | 'readingWidth' | 'readerSize' | 'readerFont' | 'readerIndent' | 'shelfView'
+>): void {
   try {
     localStorage.setItem('habitat.ui', JSON.stringify({
       theme: s.theme, fontSize: s.fontSize, radius: s.radius, collapsed: s.collapsed,
-      readingWidth: s.readingWidth, shelfView: s.shelfView,
+      readingWidth: s.readingWidth, readerSize: s.readerSize, readerFont: s.readerFont,
+      readerIndent: s.readerIndent, shelfView: s.shelfView,
     }));
   } catch {
     /* 隐私模式下写不了就算了 */
@@ -81,6 +94,9 @@ export const useUi = create<UiState>((set, get) => ({
   theme: saved.theme ?? 'ningzhi',
   fontSize: saved.fontSize ?? 'md',
   readingWidth: saved.readingWidth ?? 'normal',
+  readerSize: typeof saved.readerSize === 'number' ? Math.min(20, Math.max(15, saved.readerSize)) : 17,
+  readerFont: saved.readerFont === 'serif' ? 'serif' : 'sans',
+  readerIndent: saved.readerIndent === true,
   shelfView: saved.shelfView ?? 'grid',
   drawer: false,
   radius: saved.radius ?? 'soft',
@@ -95,6 +111,9 @@ export const useUi = create<UiState>((set, get) => ({
   setFontSize: (fontSize) => { set({ fontSize }); persist(get()); },
   setDrawer: (drawer) => set({ drawer }),
   setReadingWidth: (readingWidth) => { set({ readingWidth }); persist(get()); },
+  setReaderSize: (readerSize) => { set({ readerSize: Math.min(20, Math.max(15, readerSize)) }); persist(get()); },
+  setReaderFont: (readerFont) => { set({ readerFont }); persist(get()); },
+  setReaderIndent: (readerIndent) => { set({ readerIndent }); persist(get()); },
   setShelfView: (shelfView) => { set({ shelfView }); persist(get()); },
   setRadius: (radius) => { set({ radius }); persist(get()); },
   toggleCollapsed: () => { set({ collapsed: !get().collapsed }); persist(get()); },
@@ -133,6 +152,9 @@ export function applyUiToDocument(): void {
   root.dataset.fs = s.fontSize;
   root.dataset.reading = s.readingWidth;
   root.dataset.radius = s.radius;
+  root.dataset.readerFont = s.readerFont;
+  root.dataset.readerIndent = s.readerIndent ? '1' : '0';
+  root.style.setProperty('--reader-size', `${s.readerSize}px`);
 }
 
 useUi.subscribe(applyUiToDocument);
