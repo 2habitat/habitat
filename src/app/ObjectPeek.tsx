@@ -83,6 +83,31 @@ export function ObjectPeek() {
     }
   }
 
+  /** 关联条目点进去要「到那儿」，不是再看一层卡片——手机上尤其明显，点完像没反应 */
+  async function openRelated(id: string) {
+    let ob: { id: string; type: string; workId?: string } | undefined;
+    try {
+      const d = await endpoints.object(id);
+      // 章节对象在运行时带 workId（类型里没声明），没有它就只能落到书架
+      ob = d.object as unknown as { id: string; type: string; workId?: string };
+    } catch {
+      ob = undefined;
+    }
+    if (!ob) return;
+    // 先关面板再跳：closePeek 会按「当前 URL」重写 hash，
+    // 放在 navigate 之后会把刚设好的路由又盖回原来那页。
+    closePeek();
+    if (ob.type === 'note') navigate('editor', { id: ob.id });
+    else if (ob.type === 'part') {
+      if (ob.workId) navigate('reader', { work: ob.workId, part: ob.id });
+      else navigate('shelf');
+    } else if (ob.type === 'rep') navigate('reader', { rep: ob.id });
+    else if (ob.type === 'work') navigate('reader', { work: ob.id });
+    else if (ob.type === 'project') navigate('projects');
+    else if (ob.type === 'event') navigate('calendar');
+    else openPeek(id);
+  }
+
   function openFull() {
     if (!o) return;
     // 章节和载体要落到阅读器的那一章，不能停在书架上——「打开全文」的意义就是少走两步
@@ -189,7 +214,7 @@ export function ObjectPeek() {
                           <button
                             key={`${l.rel}-${l.id}`}
                             className="peek-link"
-                            onClick={() => openPeek(l.id)}
+                            onClick={() => void openRelated(l.id)}
                             title={`${l.rel} · ${l.kind}`}
                             data-testid="peek-link"
                             data-rel={l.rel}

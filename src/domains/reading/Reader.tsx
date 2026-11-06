@@ -643,7 +643,7 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
           <div className="reader-notice-wrap">
             <div className="notice reader-notice">
               <Chip tone="warn">入库原件 · 只读</Chip>
-              <span>可批注、可衍生，不改原文。要改就衍生一篇笔记。</span>
+              <span>可批注、可衍生，不改原文。</span>
             </div>
           </div>
         )}
