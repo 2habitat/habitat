@@ -2737,3 +2737,54 @@ input[type='checkbox']:hover { border-color: var(--text-2); }
   /* 章扉页的分隔线在窄屏上离标题太近，收掉 */
   .reader-opening { border-bottom: 0; padding-bottom: .4em; margin-bottom: 1.1em; }
 }
+
+/* ==========================================================================
+   窄屏阅读：顶部只留一条工具带
+   --------------------------------------------------------------------------
+   原来手机上有两行：一排横滑的章节 chip + 一条阅读工具。目录收进抽屉后，
+   省下来的整行还给正文——首屏能多读三五行。
+   ========================================================================== */
+.toc-btn { display: none; }
+
+@media (max-width: 820px) {
+  .reader { grid-template-rows: minmax(0, 1fr); }
+  .reader-toc { display: none; }   /* 桌面左栏，手机上收进抽屉 */
+  .toc-btn { display: inline-flex; }
+}
+
+.toc-mask {
+  position: fixed; inset: 0; z-index: 260;   /* 高于底部导航（250），否则导航条亮在蒙层上面 */
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgb(42 30 22 / 32%);
+  animation: fade-in 160ms var(--ease);
+}
+.toc-drawer {
+  width: 100%; max-width: 560px;
+  display: flex; flex-direction: column;
+  max-height: 74vh;
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  animation: slide-in-up 200ms var(--ease);
+}
+.toc-drawer-head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; }
+.toc-drawer-head b { flex: 1; min-width: 0; font-family: var(--font-display); font-size: var(--t-h3); font-weight: 600; }
+.toc-drawer-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.toc-drawer-item {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 9px 8px; border: 0; border-radius: var(--radius);
+  background: none; color: var(--text-2); font-size: var(--t-sm);
+  text-align: left; cursor: pointer;
+}
+.toc-drawer-item:hover { background: var(--surface-2); }
+.toc-drawer-item[aria-current='true'] { color: var(--text); font-weight: 600; background: var(--accent-soft); }
+.toc-drawer-item .toc-no { flex: none; }
+.toc-drawer-item .ellipsis { flex: 1; min-width: 0; }
+.toc-drawer-item .toc-count { flex: none; font-family: var(--font-mono); font-size: var(--t-micro); color: var(--text-3); }
+
+@media (max-width: 820px) {
+  /* 阅读器里顶栏是纯噪声：标题重复、搜索和采集在读的时候用不到。
+     让位给正文，退出用底部导航或系统返回。 */
+  .main[data-route='reader'] .topbar { display: none; }
+  .main[data-route='reader'] .reader-bar { padding-top: max(4px, env(safe-area-inset-top)); }
+}

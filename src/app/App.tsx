@@ -172,7 +172,7 @@ export function App() {
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main" data-route={loc.id}>
         <header className="topbar">
           <button className="nav-toggle" onClick={() => setDrawer(true)} aria-label="打开菜单" data-testid="nav-toggle">
             <Icon name="menu" size={18} />

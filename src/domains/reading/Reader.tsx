@@ -209,6 +209,8 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [activeId, setActiveId] = useState('');
   const [aaOpen, setAaOpen] = useState(false);
+  // 手机上目录收进抽屉：横排 chip 占一整行，阅读区就少了一屏的第一段
+  const [tocOpen, setTocOpen] = useState(false);
   const [focus, setFocus] = useState(false);
   const [mdReady, setMdReady] = useState(false);
 
@@ -546,6 +548,14 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
       <div className="reader-main" ref={mainRef} data-testid="reader-main">
         {/* 常驻阅读条：四个动作 + 一条进度，进度只在条的下沿长一次 */}
         <div className="reader-bar">
+          <button
+            className="bar-btn toc-btn"
+            onClick={() => setTocOpen(true)}
+            data-testid="reader-toc-open"
+            title="目录"
+          >
+            <Icon name="menu" size={13} /><span>目录</span>
+          </button>
           <span className="reader-chapter ellipsis" title={chapterTitle}>{chapterTitle}</span>
           <span className="reader-bar-spacer" />
           <button className="bar-btn" onClick={() => void markReadDone()} data-testid="reader-done" title="标记读完">
@@ -730,6 +740,35 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
           </div>
         )}
       </div>
+
+      {tocOpen && (
+        <div className="toc-mask" onClick={() => setTocOpen(false)} data-testid="reader-toc-mask">
+          <div className="toc-drawer" role="dialog" aria-label="目录" onClick={(e) => e.stopPropagation()}>
+            <div className="toc-drawer-head">
+              <b className="ellipsis">{work?.work.title ?? '目录'}</b>
+              <button className="btn btn-sm btn-quiet" onClick={() => setTocOpen(false)}>关闭</button>
+            </div>
+            <div className="toc-drawer-list">
+              {(work?.parts ?? []).slice().sort((a, b) => a.part.order - b.part.order).map((p, i) => {
+                const r = p.reps.find((x) => x.carrier === 'md') ?? p.reps[0];
+                const active = r?.id === currentRep;
+                return (
+                  <button
+                    key={p.part.id}
+                    className="toc-drawer-item"
+                    aria-current={active}
+                    onClick={() => { setTocOpen(false); if (r) setParam('rep', r.id, { work: workId ?? '' }); }}
+                  >
+                    <span className="toc-no">{String(i + 1).padStart(2, '0')}</span>
+                    <span className="ellipsis">{p.part.title}</span>
+                    {p.annotations > 0 && <span className="toc-count">{p.annotations}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {sel && (
         <div className="selbar" style={{ top: sel.top - 8, left: sel.left }} data-testid="selbar">
