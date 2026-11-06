@@ -218,6 +218,51 @@ describe('HTTP 闸门与强制改密', () => {
     }
   });
 
+  it('手机浏览器 Origin: null 的同源表单能登录；真正跨站仍拦', async () => {
+    const { app, tempPassword } = await appWithAdmin();
+    try {
+      // 三星浏览器 / 隐私模式 / 某些 WebView：同源表单也会带 Origin: null
+      const mobile = await app.inject({
+        method: 'POST',
+        url: '/login',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: 'null',
+          'sec-fetch-site': 'same-origin',
+        },
+        payload: form({ username: 'admin', password: tempPassword, mode: 'password' }),
+      });
+      expect(mobile.statusCode).toBe(302);
+      expect(mobile.headers.location).toContain('/change-password');
+
+      const evil = await app.inject({
+        method: 'POST',
+        url: '/login',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: 'https://evil.example',
+          'sec-fetch-site': 'cross-site',
+        },
+        payload: form({ username: 'admin', password: tempPassword, mode: 'password' }),
+      });
+      expect(evil.statusCode).toBe(403);
+
+      // 老浏览器没有 Sec-Fetch-Site：退回 Origin/Host 比较，跨站照样拦
+      const evilLegacy = await app.inject({
+        method: 'POST',
+        url: '/login',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: 'https://evil.example',
+        },
+        payload: form({ username: 'admin', password: tempPassword, mode: 'password' }),
+      });
+      expect(evilLegacy.statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('令牌不受强制改密限制；但不能管理账号', async () => {
     const { app } = await appWithAdmin();
     try {

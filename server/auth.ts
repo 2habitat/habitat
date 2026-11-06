@@ -109,11 +109,30 @@ function safeNext(v: unknown): string {
   return s;
 }
 
+/**
+ * 判断一个写请求是不是跨站。
+ *
+ * 不能只看 Origin：手机浏览器 / 隐私模式 / 某些 WebView 在同源表单提交时也会发 `Origin: null`。
+ * 之前直接 `new URL('null')` 会抛错，把正常登录拦成 403（生产事故）。
+ *
+ * Sec-Fetch-Site 是浏览器强制写入的 forbidden header，优先用它：
+ *   same-origin / none → 同源；same-site / cross-site → 跨站。
+ * 老浏览器没有这个头，再退回 Origin 与 Host / X-Forwarded-Host 比较；
+ * Origin 缺失或为 null 时不在这里拦，会话 Cookie 还有 SameSite=Lax 兜底。
+ */
 function crossOrigin(req: FastifyRequest): boolean {
-  const origin = req.headers.origin;
-  if (!origin) return false;
+  const site = String(req.headers['sec-fetch-site'] ?? '').trim().toLowerCase();
+  if (site === 'same-origin' || site === 'none') return false;
+  if (site === 'same-site' || site === 'cross-site') return true;
+
+  const origin = String(req.headers.origin ?? '').trim();
+  if (!origin || origin === 'null') return false;
   try {
-    return new URL(origin).host.toLowerCase() !== String(req.headers.host ?? '').toLowerCase();
+    const u = new URL(origin);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+    const forwarded = String(req.headers['x-forwarded-host'] ?? '').split(',')[0].trim();
+    const host = (forwarded || String(req.headers.host ?? '')).toLowerCase();
+    return u.host.toLowerCase() !== host;
   } catch {
     return true;
   }
