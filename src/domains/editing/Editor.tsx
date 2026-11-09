@@ -202,9 +202,27 @@ ${r.markdown}
             />
           )}
           <div className="editor-path mono" title={data.rep.path}>{data.rep.path}</div>
+          {noteId && !repId && (
+            <div className="editor-hint" data-testid="editor-note-hint">笔记也能像书一样阅读；阅读时点「编辑」回来改。</div>
+          )}
         </div>
 
         <div className="editor-actions">
+          {(repId || noteId) && (
+            <button
+              className="btn btn-sm"
+              onClick={() => (
+                noteId
+                  ? navigate('reader', { note: data.rep.id })
+                  : navigate('reader', { work: data.rep.workId, rep: data.rep.id })
+              )}
+              data-testid="editor-read"
+              title={noteId ? '像读书一样阅读这篇笔记' : '在阅读器中打开这一章'}
+            >
+              <Icon name="shelf" size={13} />
+              阅读
+            </button>
+          )}
           {locked && <Chip tone="warn" data-testid="editor-locked-chip">入库原件 · 只读</Chip>}
 
           <div className="seg" role="group" aria-label="视图">

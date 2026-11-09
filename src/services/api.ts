@@ -180,6 +180,18 @@ export const endpoints = {
 
   works: () => api.get<{ works: WorkView[] }>('/api/works'),
   work: (id: string) => api.get<WorkDetail>(`/api/works/${encodeURIComponent(id)}`),
+  buildInfo: (id: string) => api.get<BuildInfo>(`/api/works/${encodeURIComponent(id)}/build`),
+  startBuild: (id: string, action?: string) =>
+    api.post<{ ok: boolean; run: BuildRun }>(`/api/works/${encodeURIComponent(id)}/build`, { action }),
+  buildRun: (runId: string) => api.get<{ run: BuildRun }>(`/api/builds/${encodeURIComponent(runId)}`),
+  workData: (id: string) => api.get<{ files: WorkDataFile[] }>(`/api/works/${encodeURIComponent(id)}/data`),
+  workDataFile: (id: string, path: string) =>
+    api.get<WorkDataPayload>(`/api/works/${encodeURIComponent(id)}/data/file?path=${encodeURIComponent(path)}`),
+  saveWorkData: (id: string, path: string, json: unknown) =>
+    api.patch<{ ok: boolean; bytes: number; path: string }>(
+      `/api/works/${encodeURIComponent(id)}/data/file?path=${encodeURIComponent(path)}`,
+      { json },
+    ),
   rep: (id: string) => api.get<RepContent>(`/api/reps/${encodeURIComponent(id)}/content`),
   annotations: (rep?: string) => api.get<{ annotations: AnnotationView[] }>(`/api/annotations${rep ? `?rep=${encodeURIComponent(rep)}` : ''}`),
   inbox: () => api.get<{ notes: NoteView[] }>('/api/inbox'),
@@ -199,6 +211,7 @@ export const endpoints = {
   system: () => api.get<SystemView>('/api/system'),
   manifest: () => api.get<{ manifest: ManifestView }>('/api/agent/manifest'),
   objects: (type?: string) => api.get<{ objects: Record<string, unknown>[]; total: number }>(`/api/objects${type ? `?type=${type}` : ''}`),
+  notes: (q = '', limit = 200) => api.get<{ notes: NoteListItem[]; total: number }>(`/api/notes?q=${encodeURIComponent(q)}&limit=${limit}`),
   object: (id: string) => api.get<ObjectPeekView>(`/api/object/${encodeURIComponent(id)}`),
 
   /** base 必填：客户端（人或 Agent）看到的基准。没有它，外部抢先的改动会被静默覆盖 */
@@ -297,6 +310,11 @@ export const endpoints = {
 
 /* ---------------- 视图类型 ---------------- */
 
+export interface NoteListItem {
+  id: string; title: string; path: string; status: string; kind: string;
+  tags: string[]; updatedAt: string;
+}
+
 export interface WorkView {
   work: { id: string; title: string; kind: string; desc?: string; slug: string; updatedAt: string };
   parts: { id: string; title: string; order: number; supplemental?: boolean }[];
@@ -306,6 +324,8 @@ export interface WorkView {
   readPct: number;
   readChapters: number; chapterCount: number;
   lastReadAt: string | null; lastRepId: string | null;
+  /** 作品目录下有 data/ 时才有数据页入口 */
+  hasData?: boolean;
   gates: { key: string; pass: boolean; detail: string }[];
   stage: string | null; next: { key: string; text: string } | null; locked: boolean;
 }
@@ -313,6 +333,19 @@ export interface WorkDetail extends Omit<WorkView, 'parts' | 'derived'> {
   parts: ({ part: WorkView['parts'][number]; reps: WorkView['reps']; annotations: number })[];
   derived: NoteView[];
 }
+export interface BuildAction {
+  id: string; label: string; command: string; args: string[]; cwd: string;
+  timeoutMs: number; outputs: string[]; env: Record<string, string>;
+}
+export type BuildStatus = 'queued' | 'running' | 'success' | 'failed' | 'timeout' | 'interrupted';
+export interface BuildRun {
+  id: string; workId: string; slug: string; actionId: string; label: string;
+  command: string; args: string[]; cwd: string; status: BuildStatus;
+  exitCode?: number; startedAt: string; finishedAt?: string; stdout: string; stderr: string;
+}
+export interface BuildInfo { actions: BuildAction[]; lastRun: BuildRun | null }
+export interface WorkDataFile { path: string; name: string; bytes: number; updatedAt: string }
+export interface WorkDataPayload { path: string; text: string; json: unknown; bytes: number; updatedAt: string }
 export interface NoteView {
   id: string; type: string; title: string; body?: string; status: string; kind: string;
   srcIds: string[]; tags?: string[]; updatedAt: string; path?: string;

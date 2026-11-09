@@ -791,6 +791,7 @@ input[type='checkbox']:focus-visible { outline: 2px solid var(--accent); outline
   letter-spacing: -.01em; line-height: 1.15; margin: 0;
   overflow: hidden; text-overflow: ellipsis;
 }
+.editor-hint { font-size: var(--t-micro); color: var(--text-3); margin-top: 3px; line-height: 1.5; }
 .editor-path { color: var(--text-3); margin-top: 5px; letter-spacing: .02em; }
 .editor-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .editor-actions .btn .kbd { margin-left: 4px; }
@@ -2185,6 +2186,7 @@ body:has(.reader) .ai-fab { display: none; }
 }
 .entry:hover .entry-ai, .entry:focus-within .entry-ai { opacity: 1; }
 .entry-ai:hover { color: var(--text); }
+.entry-ai.visible { opacity: 1; }
 @media (hover: none) { .entry-ai { opacity: 1; } }
 
 .part {
@@ -2788,3 +2790,86 @@ input[type='checkbox']:hover { border-color: var(--text-2); }
   .main[data-route='reader'] .topbar { display: none; }
   .main[data-route='reader'] .reader-bar { padding-top: max(4px, env(safe-area-inset-top)); }
 }
+
+/* 构建：按钮 + 日志弹层。日志用等宽，状态只占一个词，不加进度条动画。 */
+.build-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: color-mix(in srgb, var(--text) 42%, transparent);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.build-modal {
+  width: min(820px, 96vw); max-height: 86vh;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-lg);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.build-modal > header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 16px; border-bottom: 1px solid var(--rule);
+}
+.build-modal > header b { font-size: var(--t-h3); }
+.build-status {
+  display: inline-block; margin-left: 10px; padding: 2px 7px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: var(--t-micro); font-weight: 500;
+  background: var(--surface-2); color: var(--text-2);
+}
+.build-status.success { background: var(--ok-soft); color: var(--ok); }
+.build-status.failed, .build-status.timeout { background: var(--danger-soft); color: var(--danger); }
+.build-status.running, .build-status.queued { background: var(--accent-soft); color: var(--accent-ink); }
+.build-meta {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule);
+  font-family: var(--font-mono); font-size: var(--t-micro); color: var(--text-3);
+}
+.build-log {
+  flex: 1; min-height: 180px; margin: 0; padding: 14px 16px;
+  overflow: auto; background: var(--surface-2); color: var(--text-2);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+.build-modal > footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; border-top: 1px solid var(--rule);
+}
+@media (max-width: 640px) {
+  .build-overlay { padding: 0; align-items: flex-end; }
+  .build-modal { width: 100%; max-height: 90vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+}
+
+/* 作品 JSON 数据：左边表格，右边字段；手机上上下堆叠。 */
+.data-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 6px 0 16px; border-bottom: 1px solid var(--rule); }
+.data-title { font-family: var(--font-display); font-size: var(--t-h1); font-weight: 600; margin: 2px 0 0; }
+.data-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+.data-split { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 22px; padding-top: 14px; align-items: start; }
+.data-table-wrap { min-width: 0; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
+.data-table { font-size: var(--t-xs); }
+.data-table th { position: sticky; top: 0; background: var(--surface-2); z-index: 1; white-space: nowrap; }
+.data-table td { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.data-table tr[data-selected='1'] { background: var(--accent-soft); }
+.data-pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px; border-top: 1px solid var(--rule); }
+.data-editor { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); padding: 14px; position: sticky; top: 12px; max-height: calc(100vh - 150px); overflow: auto; }
+.data-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); margin-bottom: 10px; }
+.data-fields { display: flex; flex-direction: column; gap: 10px; }
+.data-field { display: flex; flex-direction: column; gap: 4px; }
+.data-field > span { font-family: var(--font-mono); font-size: var(--t-micro); color: var(--text-3); }
+.data-text, .data-json { min-height: 76px; resize: vertical; font-family: var(--font-sans); font-size: var(--t-sm); line-height: 1.55; }
+.data-json { font-family: var(--font-mono); font-size: var(--t-xs); }
+.data-raw-wrap { padding-top: 14px; }
+.data-raw { width: 100%; min-height: 60vh; resize: vertical; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; }
+@media (max-width: 980px) {
+  .data-split { grid-template-columns: 1fr; }
+  .data-editor { position: static; max-height: none; }
+  .data-head { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 640px) {
+  /* 手机上数据表只留 ID / 标题 / 类型 / 优先级 / 星标；其余字段在右侧编辑器里改 */
+  .data-table th:nth-child(n+6), .data-table td:nth-child(n+6) { display: none; }
+  .data-table td { max-width: none; white-space: nowrap; }
+  .data-toolbar .input { flex: 1 1 140px; }
+}
+
+/* 笔记列表：标题是可点的阅读入口，样式跟 h3 一致，不另起一套 */
+.entry-title-link {
+  border: 0; background: none; padding: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; min-width: 0;
+}
+.entry-title-link:hover { color: var(--accent-ink); }

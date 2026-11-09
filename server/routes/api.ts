@@ -7,7 +7,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
-import type { Action, Author, Id, JournalOp, Op } from '../../shared/types.ts';
+import type { Action, Author, Id, JournalOp, Note, Op } from '../../shared/types.ts';
 import { newId, nowISO } from '../../shared/id.ts';
 import { Habitat } from '../core/space.ts';
 import { STATE } from '../core/store.ts';
@@ -26,6 +26,8 @@ import { lifeSnapshot, lifeViewOf } from '../core/lifecycle.ts';
 import { touch, flush } from '../core/usage.ts';
 import { renewPack, renderRenew, markReviewed } from '../core/renew.ts';
 import { listDir, preview, moveFile, makeDir, archiveFiles } from '../core/fs.ts';
+import { BuildManager } from '../core/builds.ts';
+import { listWorkData, readWorkData, writeWorkData } from '../core/workdata.ts';
 import { loadRules, saveRules, normalizeRule, runRules } from '../core/rules.ts';
 import {
   computeStatuses, runLoop, beat, loadAutomation, saveAutomation, checkAutomation,
@@ -81,6 +83,7 @@ export const api = fp<ApiOpts>(async (app: FastifyInstance, opts: ApiOpts) => {
     throw e;
   }
   app.decorate('habitat', hab);
+  const builds = new BuildManager(hab);
 
   /** 传 ids 走增量索引；不传就整库重建（外部改动、批量操作时用） */
   const rescan = async (ids?: string[]) => {
@@ -109,6 +112,32 @@ function asBuffer(body: unknown): Buffer | null {
       parts: hab.store.all('part').length,
     },
   }));
+
+  /** 笔记清单：只回列表需要的字段，不把 100 多篇正文一起塞给书架 */
+  app.get('/api/notes', async (req) => {
+    const q = req.query as { q?: string; limit?: string };
+    let list = hab.store.all<Note>('note').filter((n) => !n.archivedAt);
+    if (q.q) {
+      const s = q.q.toLowerCase();
+      list = list.filter((n) =>
+        `${n.title} ${(n.tags ?? []).join(' ')} ${n.path ?? ''}`.toLowerCase().includes(s),
+      );
+    }
+    list.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+    const limit = Math.min(300, Math.max(1, Number(q.limit ?? 200) || 200));
+    return {
+      notes: list.slice(0, limit).map((n) => ({
+        id: n.id,
+        title: n.title,
+        path: n.path ?? '',
+        status: n.status,
+        kind: n.kind,
+        tags: n.tags ?? [],
+        updatedAt: n.updatedAt,
+      })),
+      total: list.length,
+    };
+  });
 
   app.get('/api/objects', async (req) => {
     const q = req.query as { type?: string; q?: string; limit?: string; includeArchived?: string };
@@ -147,6 +176,79 @@ function asBuffer(body: unknown): Buffer | null {
       annotations: hab.annotationsOf(p.id).length,
     }));
     return { ...v, parts, derived: hab.derivedOf(id) };
+  });
+
+  /* ---------------- 声明式构建 ---------------- */
+
+  app.get('/api/works/:id/build', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      return await builds.info(id);
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/works/:id/build', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = (req.body ?? {}) as { action?: string };
+    try {
+      const run = await builds.start(id, b.action, actorOf(b, req.headers));
+      return reply.code(202).send({ ok: true, run });
+    } catch (e) {
+      const msg = (e as Error).message;
+      return reply.code(msg.includes('已有构建') ? 409 : 400).send({ error: msg });
+    }
+  });
+
+  app.get('/api/works/:id/build/runs', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      return { runs: await builds.list(id) };
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  app.get('/api/builds/:runId', async (req, reply) => {
+    const { runId } = req.params as { runId: string };
+    const run = await builds.get(runId);
+    if (!run) return reply.code(404).send({ error: `构建记录不存在：${runId}` });
+    return { run };
+  });
+
+  /* ---------------- 作品 JSON 数据 ---------------- */
+
+  app.get('/api/works/:id/data', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      return { files: await listWorkData(hab, id) };
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  app.get('/api/works/:id/data/file', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string };
+    try {
+      return await readWorkData(hab, id, String(q.path ?? ''));
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  app.patch('/api/works/:id/data/file', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { path?: string };
+    const b = (req.body ?? {}) as { json?: unknown };
+    if (!('json' in b)) return reply.code(400).send({ error: 'body 需要 { json }' });
+    try {
+      const saved = await writeWorkData(hab, id, String(q.path ?? ''), b.json, actorOf(b, req.headers));
+      return { ok: true, ...saved };
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
   });
 
   /* ---------------- 文件浏览（受管） ---------------- */

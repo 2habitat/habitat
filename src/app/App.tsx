@@ -14,6 +14,7 @@ import { TodayPage, InboxPage, CalendarPage, ProjectsPage, AreasPage, ReviewPage
 import { ShelfPage, ContinuePage, ComposePage } from '../domains/library/pages.tsx';
 import { ReaderPage } from '../domains/reading/Reader.tsx';
 import { EditorPage } from '../domains/editing/Editor.tsx';
+import { DataPage } from '../domains/data/DataPage.tsx';
 import { SearchPage, TagsPage, CollectionsPage, GraphPage } from '../domains/connect/pages.tsx';
 import { AssistantPage, ChangesPage, JobsPage, AutomationPage } from '../domains/ai/pages.tsx';
 import { LoopsPage } from '../domains/ai/LoopsPage.tsx';
@@ -249,8 +250,9 @@ function Page({ id, params }: { id: ReturnType<typeof useLocation>['id']; params
     case 'shelf': return <ShelfPage />;
     case 'continue': return <ContinuePage />;
     case 'compose': return <ComposePage />;
-    case 'reader': return <ReaderPage workId={params.work} repId={params.rep} partId={params.part} />;
+    case 'reader': return <ReaderPage workId={params.work} repId={params.rep} partId={params.part} noteId={params.note} />;
     case 'editor': return <EditorPage repId={params.rep} noteId={params.id} />;
+    case 'data': return <DataPage work={params.work} path={params.path} />;
 
     case 'search': return <SearchPage q={params.q} />;
     case 'tags': return <TagsPage />;

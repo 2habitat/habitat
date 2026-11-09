@@ -274,7 +274,16 @@ export function CollectionsPage() {
                 {c.memberIds.length > 0 && (
                   <div className="member-row">
                     {c.memberIds.slice(0, 6).map((m) => (
-                      <button key={m} className="tag" onClick={() => navigate('reader', { rep: m })}>
+                      <button
+                        key={m}
+                        className="tag"
+                        onClick={() => {
+                          const kind = titles.get(m)?.type;
+                          if (kind === 'note') navigate('reader', { note: m });
+                          else if (kind === 'work') navigate('reader', { work: m });
+                          else navigate('reader', { rep: m });
+                        }}
+                      >
                         {titles.get(m)?.title ?? m.slice(0, 12)}
                       </button>
                     ))}

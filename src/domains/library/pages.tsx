@@ -7,8 +7,9 @@ import { useWorks, useRefresh } from '../../services/use.ts';
 import { endpoints } from '../../services/api.ts';
 import { useUi } from '../../app/ui.ts';
 import { navigate } from '../../app/router.ts';
-import { WORK_KIND, WORK_STAGE, label } from '../../app/labels.ts';
-import type { WorkView, WorkCandidateView } from '../../services/api.ts';
+import { WORK_KIND, WORK_STAGE, label, NOTE_STATUS } from '../../app/labels.ts';
+import { BuildButton } from '../../components/BuildButton.tsx';
+import type { WorkView, WorkCandidateView, NoteListItem } from '../../services/api.ts';
 
 const STAGE_NAME = WORK_STAGE;
 
@@ -26,12 +27,85 @@ export function ShelfPage() {
     queryFn: () => endpoints.candidates(),
     staleTime: 30_000,
   });
+  const [mode, setMode] = useState<'works' | 'notes'>('works');
   const [q, setQ] = useState('');
   const [showSup, setShowSup] = useState(false);
+  const { data: notesData, isLoading: notesLoading, error: notesError, refetch: refetchNotes } = useQuery({
+    queryKey: ['notes-list', q],
+    queryFn: () => endpoints.notes(q),
+    enabled: mode === 'notes',
+    staleTime: 15_000,
+  });
   const shelfView = useUi((s) => s.shelfView);
   const setShelfView = useUi((s) => s.setShelfView);
   const openSheet = useUi((s) => s.openSheet);
   const openAi = useUi((s) => s.openAi);
+
+  if (mode === 'notes') {
+    const notes = notesData?.notes ?? [];
+    return (
+      <div className="content-wide">
+        <PageHead
+          eyebrow="知识 · 笔记"
+          title="笔记"
+          lede="笔记也能像书一样读：目录、进度、批注；读的时候点「编辑」回来改。"
+          actions={
+            <>
+              <div className="seg" role="group" aria-label="分类">
+                <button className="seg-item" aria-pressed={false} onClick={() => setMode('works')}>书本</button>
+                <button className="seg-item" aria-pressed onClick={() => setMode('notes')}>笔记</button>
+              </div>
+              <input
+                className="input"
+                placeholder="过滤笔记…"
+                style={{ width: 168 }}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                aria-label="过滤笔记"
+              />
+              <button className="btn btn-sm btn-primary" onClick={() => navigate('editor', { id: '' })}>
+                <Icon name="pen" size={13} />
+                写一篇
+              </button>
+            </>
+          }
+        />
+        {notesLoading ? <Spinner /> : notesError ? (
+          <ErrorBox error={notesError} onRetry={() => void refetchNotes()} />
+        ) : notes.length === 0 ? (
+          <Empty
+            title={q ? `没有匹配「${q}」的笔记` : '还没有笔记'}
+            desc={q ? '换个词，或者清掉过滤看全部。' : '从阅读、采集，或者直接写一篇开始。'}
+            action={<button className="btn" onClick={() => navigate('editor', { id: '' })}>写一篇</button>}
+          />
+        ) : (
+          <>
+            <div className="small muted" style={{ margin: '4px 0 12px' }}>共 {notesData?.total ?? notes.length} 篇 · 按更新时间倒序</div>
+            <div className="stagger">
+              {notes.map((n: NoteListItem) => (
+                <article className="entry" key={n.id} data-testid="note-card">
+                  <div className="entry-main">
+                    <div className="entry-title">
+                      <h3><button className="entry-title-link" onClick={() => navigate('reader', { note: n.id })}>{n.title}</button></h3>
+                      <span className="entry-stage">{NOTE_STATUS[n.status] ?? n.status}</span>
+                    </div>
+                    <div className="entry-meta">
+                      {n.tags.slice(0, 3).map((t) => <span key={t}>{t}</span>)}
+                      <span>{n.updatedAt.slice(0, 10)}</span>
+                      <button className="entry-go" onClick={() => navigate('reader', { note: n.id })} data-testid="note-read">
+                        阅读 <Icon name="arrow" size={12} />
+                      </button>
+                      <button className="entry-ai visible" onClick={() => navigate('editor', { id: n.id })} data-testid="note-edit">编辑</button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   if (isLoading) return <PageSkeleton rows={4} ledger />;
   if (error) return <ErrorBox error={error} onRetry={() => void refetch()} />;
@@ -48,6 +122,10 @@ export function ShelfPage() {
         lede="同一章节的多个载体合成一行。读到哪里按章记，回看不会把最远位置清掉。"
         actions={
           <>
+            <div className="seg" role="group" aria-label="分类">
+              <button className="seg-item" aria-pressed onClick={() => setMode('works')}>书本</button>
+              <button className="seg-item" aria-pressed={false} onClick={() => setMode('notes')}>笔记</button>
+            </div>
             <input
               className="input"
               placeholder="过滤书名…"
@@ -200,6 +278,8 @@ function WorkCard({ w, index, onAi }: { w: WorkView; index: number; onAi: () => 
         <span>{w.readChapters > 0 ? `${w.readChapters}/${w.chapterCount || main.length} 章` : `${main.length} 章`}</span>
         <span className="card-stage">{stage}</span>
         {w.locked && <span>只读</span>}
+        <BuildButton workId={w.work.id} compact showStatus={false} />
+        {w.hasData && <button className="entry-ai visible" onClick={() => navigate('data', { work: w.work.id })} data-testid="work-data">数据</button>}
         <button className="entry-ai" onClick={onAi} data-testid="work-ask-ai">问助手</button>
       </div>
     </div>
@@ -246,6 +326,8 @@ function WorkEntry({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: 
             {done > 0 ? '继续读' : '开始读'}
             <Icon name="arrow" size={12} />
           </button>
+          <BuildButton workId={w.work.id} compact showStatus={false} />
+          {w.hasData && <button className="entry-ai visible" onClick={() => navigate('data', { work: w.work.id })} data-testid="work-data">数据</button>}
           <button className="entry-ai" onClick={onAi} data-testid="work-ask-ai">问助手</button>
         </div>
 

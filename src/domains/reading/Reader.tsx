@@ -17,6 +17,7 @@ import { Chip, Empty, Spinner, ErrorBox } from '../../components/ui.tsx';
 import { Icon } from '../../components/icons.tsx';
 import { NOTE_STATUS } from '../../app/labels.ts';
 import { useWork, useRep, useAnnotations, useRefresh } from '../../services/use.ts';
+import { BuildButton } from '../../components/BuildButton.tsx';
 import { endpoints } from '../../services/api.ts';
 import type { AnnotationView } from '../../services/api.ts';
 import { onMarkdownReady, prepareMarkdown, renderMarkdown } from '../../services/markdown.ts';
@@ -161,7 +162,7 @@ function sameOutline(a: OutlineItem[], b: OutlineItem[]): boolean {
 
 /* ---------------- 页面 ---------------- */
 
-export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?: string; partId?: string }) {
+export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string; repId?: string; partId?: string; noteId?: string }) {
   const { data: work } = useWork(workId ?? '');
   const refresh = useRefresh();
   const openSheet = useUi((s) => s.openSheet);
@@ -187,7 +188,7 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
     return r?.id ?? '';
   }, [repId, work, partId]);
 
-  const currentRep = repId || fallbackRep;
+  const currentRep = repId || noteId || fallbackRep;
   const { data: repData, isLoading, error } = useRep(currentRep);
   const { data: anns } = useAnnotations(currentRep);
   // 空引文的历史批注不参与渲染：包不住，也不该占一条边注
@@ -228,8 +229,28 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
     [body, carrier, mdReady],
   );
 
+  const noteTitle = useMemo(() => {
+    if (!noteId) return '';
+    const raw = (repData?.content ?? '').split('\r').join('');
+    const lines = raw.split('\n');
+    let inFm = false;
+    let title = '';
+    for (const line of lines) {
+      if (line.trim() === '---') {
+        if (!inFm) { inFm = true; continue; }
+        break;
+      }
+      if (inFm && line.startsWith('title:')) {
+        title = line.slice(6).trim().replace(/^["']|["']$/g, '');
+      }
+    }
+    if (title) return title;
+    const heading = (repData?.body ?? '').split('\n').find((l) => l.startsWith('# '));
+    return heading ? heading.slice(2).trim() : '笔记';
+  }, [noteId, repData?.content, repData?.body]);
+
   const currentPart = work?.parts.find((p) => p.reps.some((r) => r.id === currentRep));
-  const chapterTitle = currentPart?.part.title ?? '正文';
+  const chapterTitle = noteId ? noteTitle : currentPart?.part.title ?? '正文';
   const furthest = Math.round(((repData?.cursor.furthest ?? 0) as number) * 100);
   const isDoc = carrier === 'md' || carrier === 'html';
 
@@ -479,17 +500,19 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
     });
   };
 
-  if (workId && isLoading) return <Spinner />;
+  if ((workId || noteId) && isLoading) return <Spinner />;
   if (error) return <ErrorBox error={error} />;
   if (!repData) {
     return (
       <Empty
-        title="选一章开始读"
-        desc="从书架进，或者直接点左侧章节"
+        title={noteId ? '这篇笔记读不到' : '选一章开始读'}
+        desc={noteId ? '文件可能被移动或删除；从书架「笔记」分类重新打开。' : '从书架进，或者直接点左侧章节'}
         action={<button className="btn" onClick={() => navigate('shelf')}>打开书架</button>}
       />
     );
   }
+
+  const editParams: Record<string, string> = noteId ? { id: currentRep } : { rep: currentRep };
 
   async function markReadDone() {
     try {
@@ -552,6 +575,29 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
               <span>最远 {furthest}%</span>
             </div>
           </>
+        ) : noteId ? (
+          <>
+            <div className="toc-head">
+              <div className="toc-work ellipsis" title={noteTitle}>{noteTitle}</div>
+              <div className="toc-sub">笔记</div>
+            </div>
+            <div className="toc-list">
+              {outline.length === 0 ? (
+                <div className="small muted" style={{ padding: '8px 4px' }}>这篇笔记没有小标题。</div>
+              ) : outline.map((item) => (
+                <button
+                  key={item.id}
+                  className="toc-section"
+                  data-level={item.level}
+                  aria-current={activeId === item.id}
+                  onClick={() => scrollToId(item.id)}
+                >
+                  {item.text}
+                </button>
+              ))}
+            </div>
+            <div className="toc-foot"><span>约 {minutes} 分钟</span></div>
+          </>
         ) : (
           <div className="small muted" style={{ padding: '8px 4px' }}>从书架进来才能看到章节列表。</div>
         )}
@@ -570,6 +616,13 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
           </button>
           <span className="reader-chapter ellipsis" title={chapterTitle}>{chapterTitle}</span>
           <span className="reader-bar-spacer" />
+          {repData && !repData.locked && (
+            <button className="bar-btn" onClick={() => navigate('editor', editParams)} data-testid="reader-edit" title={noteId ? '编辑这篇笔记' : '编辑这一章'}>
+              编辑
+            </button>
+          )}
+          {work && <BuildButton workId={work.work.id} compact showStatus={false} />}
+          {work?.hasData && <button className="bar-btn" onClick={() => navigate('data', { work: work.work.id })} title="编辑数据">数据</button>}
           <button className="bar-btn" onClick={() => void markReadDone()} data-testid="reader-done" title="标记读完">
             <Icon name="check" size={13} /><span>读完</span>
           </button>
@@ -696,7 +749,7 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
           <div className="reader-flow">
             <header className="reader-opening">
               <p className="reader-kicker">
-                {work ? `${work.work.title}${chapterOrder ? ` · 第 ${chapterOrder} 章` : ''}` : '正文'}
+                {noteId ? '笔记' : work ? `${work.work.title}${chapterOrder ? ` · 第 ${chapterOrder} 章` : ''}` : '正文'}
               </p>
               <h1>{chapterTitle}</h1>
               <p className="reader-meta">{charCount.toLocaleString('zh-CN')} 字 · 约 {minutes} 分钟</p>
@@ -757,26 +810,39 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
         <div className="toc-mask" onClick={() => setTocOpen(false)} data-testid="reader-toc-mask">
           <div className="toc-drawer" role="dialog" aria-label="目录" onClick={(e) => e.stopPropagation()}>
             <div className="toc-drawer-head">
-              <b className="ellipsis">{work?.work.title ?? '目录'}</b>
+              <b className="ellipsis">{work?.work.title ?? (noteId ? noteTitle : '目录')}</b>
               <button className="btn btn-sm btn-quiet" onClick={() => setTocOpen(false)}>关闭</button>
             </div>
             <div className="toc-drawer-list">
-              {(work?.parts ?? []).slice().sort((a, b) => a.part.order - b.part.order).map((p, i) => {
-                const r = p.reps.find((x) => x.carrier === 'md') ?? p.reps[0];
-                const active = r?.id === currentRep;
-                return (
+              {work ? (
+                (work.parts ?? []).slice().sort((a, b) => a.part.order - b.part.order).map((p, i) => {
+                  const r = p.reps.find((x) => x.carrier === 'md') ?? p.reps[0];
+                  const active = r?.id === currentRep;
+                  return (
+                    <button
+                      key={p.part.id}
+                      className="toc-drawer-item"
+                      aria-current={active}
+                      onClick={() => { setTocOpen(false); if (r) setParam('rep', r.id, { work: workId ?? '' }); }}
+                    >
+                      <span className="toc-no">{String(i + 1).padStart(2, '0')}</span>
+                      <span className="ellipsis">{p.part.title}</span>
+                      {p.annotations > 0 && <span className="toc-count">{p.annotations}</span>}
+                    </button>
+                  );
+                })
+              ) : noteId ? (
+                outline.map((item) => (
                   <button
-                    key={p.part.id}
+                    key={item.id}
                     className="toc-drawer-item"
-                    aria-current={active}
-                    onClick={() => { setTocOpen(false); if (r) setParam('rep', r.id, { work: workId ?? '' }); }}
+                    data-level={item.level}
+                    onClick={() => { setTocOpen(false); scrollToId(item.id); }}
                   >
-                    <span className="toc-no">{String(i + 1).padStart(2, '0')}</span>
-                    <span className="ellipsis">{p.part.title}</span>
-                    {p.annotations > 0 && <span className="toc-count">{p.annotations}</span>}
+                    <span className="ellipsis">{item.text}</span>
                   </button>
-                );
-              })}
+                ))
+              ) : null}
             </div>
           </div>
         </div>

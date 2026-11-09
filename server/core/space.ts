@@ -15,6 +15,7 @@ import { touch } from './usage.ts';
 import { SearchIndex } from './index.ts';
 import { reconcile, takeSnapshot } from './reconcile.ts';
 import * as path from 'node:path';
+import fs from 'node:fs';
 import { slugify } from './store.ts';
 
 export interface WorkView {
@@ -32,6 +33,8 @@ export interface WorkView {
   lastReadAt: string | null;
   /** 最后一次读的那个载体，书架/继续阅读用它回到「你停下的那一章」 */
   lastRepId: string | null;
+  /** 作品目录下是否有 data/（JSON 编辑器入口是否值得显示） */
+  hasData: boolean;
   gates: ReturnType<typeof gatesOf>;
   stage: ReturnType<typeof stageOf>;
   next: ReturnType<typeof nextAction>;
@@ -337,6 +340,7 @@ export class Habitat {
       chapterCount: prog.total,
       lastReadAt: prog.lastReadAt,
       lastRepId: prog.lastRepId,
+      hasData: !!work.path && fs.existsSync(path.join(this.store.root, path.dirname(work.path), 'data')),
       gates: g.gates,
       stage: g.stage,
       next: g.next,

@@ -97,7 +97,7 @@ export function ObjectPeek() {
     // 先关面板再跳：closePeek 会按「当前 URL」重写 hash，
     // 放在 navigate 之后会把刚设好的路由又盖回原来那页。
     closePeek();
-    if (ob.type === 'note') navigate('editor', { id: ob.id });
+    if (ob.type === 'note') navigate('reader', { note: ob.id });
     else if (ob.type === 'part') {
       if (ob.workId) navigate('reader', { work: ob.workId, part: ob.id });
       else navigate('shelf');
@@ -111,7 +111,7 @@ export function ObjectPeek() {
   function openFull() {
     if (!o) return;
     // 章节和载体要落到阅读器的那一章，不能停在书架上——「打开全文」的意义就是少走两步
-    if (o.type === 'note') navigate('editor', { id: o.id });
+    if (o.type === 'note') navigate('reader', { note: o.id });
     else if (o.type === 'part') {
       const wid = (o as { workId?: string }).workId;
       // 带上 part：同一部书 24 章，不带章节就只能落到第一章，点了等于没点
