@@ -8,12 +8,20 @@ import { STAGES } from './types.ts';
 
 export const DIGEST_PCT = 0.99;
 export const SETTLE_INBOUND = 2;
+/**
+ * 单章「读完」的判定线：章节内最远位置过了这条线就算这一章读完。
+ * 留 2% 的余量，因为章末还有「读到这里」和血缘区，正文并没有到卷底。
+ */
+export const CHAPTER_DONE_PCT = 0.98;
 
 export interface LifeFacts {
   exists: boolean;
   hasSource: boolean;
   derivedCount: number;
-  /** 0..1，取 furthest 而非 current，回看不退步 */
+  /**
+   * 0..1。作品是「读完的章数 ÷ 正文章数」（章节覆盖率），
+   * 单章 / 载体才是章内最远位置——一章滚到底只该算一章，不该算整本。
+   */
   readPct: number;
   reviewedAt?: string | null;
   evergreen: boolean;

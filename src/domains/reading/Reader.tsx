@@ -332,6 +332,18 @@ export function ReaderPage({ workId, repId, partId }: { workId?: string; repId?:
     });
   }, [repData?.rep.id, html]);
 
+  /* ---- 一屏就放得下的章：滚不动就没有滚动事件，进度永远报不上来 ---- */
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el || !currentRep || !isDoc || body.trim().length === 0) return;
+    const t = setTimeout(() => {
+      // 停留几秒之后还没溢出，说明整章就在眼前——这一章可以算读完
+      if (el.scrollHeight - el.clientHeight > 8) return;
+      void endpoints.cursor(currentRep, 1);
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [currentRep, html, isDoc, body]);
+
   /* ---- 滚动：只改进度条和当前小节，不整页重渲 ---- */
   useEffect(() => {
     const el = mainRef.current;

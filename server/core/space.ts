@@ -6,7 +6,7 @@ import type {
   Action, Annotation, AnyObject, Author, EventRec, Id, JournalEvent, Note,
   ObjectLink, ObjectView, Part, Project, Rep, Work,
 } from '../../shared/types.ts';
-import { gatesOf, stageOf, nextAction, type LifeFacts } from '../../shared/lifecycle.ts';
+import { CHAPTER_DONE_PCT, gatesOf, stageOf, nextAction, type LifeFacts } from '../../shared/lifecycle.ts';
 import { newId, nowISO } from '../../shared/id.ts';
 import { Journal } from './journal.ts';
 import { Store } from './store.ts';
@@ -24,7 +24,14 @@ export interface WorkView {
   originals: number;
   annotations: number;
   derived: number;
+  /** 读完的章数 ÷ 正文章数。一章滚到底只算这一章 */
   readPct: number;
+  readChapters: number;
+  chapterCount: number;
+  /** 这个名字下最后一次阅读上报的时间，继续阅读按它排 */
+  lastReadAt: string | null;
+  /** 最后一次读的那个载体，书架/继续阅读用它回到「你停下的那一章」 */
+  lastRepId: string | null;
   gates: ReturnType<typeof gatesOf>;
   stage: ReturnType<typeof stageOf>;
   next: ReturnType<typeof nextAction>;
@@ -191,16 +198,44 @@ export class Habitat {
     return { facts: f, gates: gatesOf(f), stage: stageOf(f), next: nextAction(f) };
   }
 
+  /**
+   * 作品的进度是「章节覆盖率」，不是「某一章读到多深」。
+   * 旧算法取所有载体 furthest 的最大值，于是任意一章滚到底 = 全书 100%：
+   * 24 章的书读 2 章就满格，然后既不算「读到一半」也不算「没开始」，
+   * 从「继续阅读」里彻底消失。现在按章记账：一章滚到底只算这一章。
+   */
+  private workProgress(id: Id): {
+    pct: number;
+    done: number;
+    total: number;
+    lastReadAt: string | null;
+    lastRepId: string | null;
+  } {
+    const reps = this.store.all<Rep>('rep').filter((r) => r.workId === id);
+    const deepest = new Map<string, number>();
+    let lastReadAt: string | null = null;
+    let lastRepId: string | null = null;
+    for (const r of reps) {
+      const c = this.store.cursors.get(r.id);
+      if (!c) continue;
+      deepest.set(r.partId, Math.max(deepest.get(r.partId) ?? 0, c.furthest ?? 0));
+      if (!lastReadAt || (c.updatedAt ?? '') > lastReadAt) {
+        lastReadAt = c.updatedAt ?? lastReadAt;
+        lastRepId = r.id;
+      }
+    }
+    // 分母只算正文：补充材料不进顺序，也不该拖住整本
+    const main = this.store.all<Part>('part').filter((p) => p.workId === id && !p.supplemental);
+    const readable = main.filter((p) => reps.some((r) => r.partId === p.id));
+    const total = readable.length;
+    const done = readable.filter((p) => (deepest.get(p.id) ?? 0) >= CHAPTER_DONE_PCT).length;
+    return { pct: total ? done / total : 0, done, total, lastReadAt, lastRepId };
+  }
+
   private readPct(id: Id): number {
     const o = this.store.get(id);
     if (!o) return 0;
-    if (o.type === 'work') {
-      let best = 0;
-      for (const r of this.store.all<Rep>('rep').filter((r) => r.workId === id)) {
-        best = Math.max(best, this.store.cursors.get(r.id)?.furthest ?? 0);
-      }
-      return best;
-    }
+    if (o.type === 'work') return this.workProgress(id).pct;
     if (o.type === 'rep') return this.store.cursors.get(id)?.furthest ?? 0;
     // 笔记：读过就算读过
     return this.lastEvent(id, 'read') ? 1 : 0;
@@ -289,6 +324,7 @@ export class Habitat {
       .sort((a, b) => a.order - b.order);
     const reps = this.store.all<Rep>('rep').filter((r) => r.workId === id);
     const g = this.gates(id);
+    const prog = this.workProgress(id);
     return {
       work,
       parts,
@@ -296,7 +332,11 @@ export class Habitat {
       originals: this.store.assets.filter((a) => a.kind === 'original' && a.workSlug === work.slug).length,
       annotations: this.annotationsOf(id).length,
       derived: this.derivedOf(id).filter((d) => d.type === 'note').length,
-      readPct: g.facts.readPct,
+      readPct: prog.pct,
+      readChapters: prog.done,
+      chapterCount: prog.total,
+      lastReadAt: prog.lastReadAt,
+      lastRepId: prog.lastRepId,
       gates: g.gates,
       stage: g.stage,
       next: g.next,

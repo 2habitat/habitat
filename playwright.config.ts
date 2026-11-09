@@ -2,7 +2,9 @@ import { defineConfig } from '@playwright/test';
 import path from 'node:path';
 
 // 测试空间放仓库内，跟着仓库走，不写死任何人的绝对路径
-const E2E = path.resolve('.e2e-space');
+// 允许用 HABITAT_E2E_ROOT 换位置：测试文件与 seed 脚本早就在读这个变量，配置这里跟上，
+// 否则「空间被占用删不掉」时整轮测试都起不来。
+const E2E = process.env.HABITAT_E2E_ROOT ? path.resolve(process.env.HABITAT_E2E_ROOT) : path.resolve('.e2e-space');
 
 const PORT_API = Number(process.env.HABITAT_E2E_API_PORT ?? 8788);
 const PORT_WEB = Number(process.env.HABITAT_E2E_WEB_PORT ?? 5179);

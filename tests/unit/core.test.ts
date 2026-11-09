@@ -9,7 +9,7 @@ import { makeSpace, rmSpace, MINI, W1, D_TODAY, D_EVENT, MONTH_EVENT, day } from
 import { parseDoc } from '../../shared/frontmatter.ts';
 import { gatesOf, stageOf } from '../../shared/lifecycle.ts';
 import { tokenize, buildQuery } from '../../server/core/index.ts';
-import type { Note, Rep, Action } from '../../shared/types.ts';
+import type { Note, Part, Rep, Action } from '../../shared/types.ts';
 
 let dir: string;
 let hab: Habitat;
@@ -419,6 +419,42 @@ describe('阅读位置：current 与 furthest 分开', () => {
     const back = await hab.setCursor(rep.id, 0.3);
     expect(back.cursor.current).toBeCloseTo(0.3);
     expect(back.cursor.furthest).toBeCloseTo(0.8);
+  });
+});
+
+describe('作品进度：按章算覆盖率，不按单章最深处', () => {
+  const mainReps = () => {
+    const parts = hab.store.all<Part>('part').filter((p) => p.workId === W1 && !p.supplemental);
+    return hab.store
+      .all<Rep>('rep')
+      .filter((r) => parts.some((p) => p.id === r.partId));
+  };
+
+  it('一章滚到底只算这一章，整本不再跟着满格', async () => {
+    const reps = mainReps();
+    await hab.setCursor(reps[0].id, 1);
+    const v = hab.workView(W1)!;
+    expect(v.chapterCount).toBe(2); // 附录是补充材料，不进分母
+    expect(v.readChapters).toBe(1);
+    expect(v.readPct).toBeCloseTo(0.5);
+    expect(v.lastReadAt).toBeTruthy();
+    expect(v.lastRepId).toBe(reps[0].id);
+  });
+
+  it('差一点点不算读完：0.97 只停在「在读」', async () => {
+    await hab.setCursor(mainReps()[0].id, 0.97);
+    const v = hab.workView(W1)!;
+    expect(v.readChapters).toBe(0);
+    expect(v.readPct).toBe(0);
+    expect(v.lastReadAt).toBeTruthy(); // 读过，只是没读完
+  });
+
+  it('正文章全部读完才是 100%', async () => {
+    for (const r of mainReps()) await hab.setCursor(r.id, 1);
+    const v = hab.workView(W1)!;
+    expect(v.readChapters).toBe(2);
+    expect(v.chapterCount).toBe(2);
+    expect(v.readPct).toBe(1);
   });
 });
 

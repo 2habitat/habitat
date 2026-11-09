@@ -301,7 +301,11 @@ export interface WorkView {
   work: { id: string; title: string; kind: string; desc?: string; slug: string; updatedAt: string };
   parts: { id: string; title: string; order: number; supplemental?: boolean }[];
   reps: { id: string; partId: string; carrier: string; path: string; locked: boolean; bytes: number }[];
-  originals: number; annotations: number; derived: number; readPct: number;
+  originals: number; annotations: number; derived: number;
+  /** 读完的章数 ÷ 正文章数 */
+  readPct: number;
+  readChapters: number; chapterCount: number;
+  lastReadAt: string | null; lastRepId: string | null;
   gates: { key: string; pass: boolean; detail: string }[];
   stage: string | null; next: { key: string; text: string } | null; locked: boolean;
 }

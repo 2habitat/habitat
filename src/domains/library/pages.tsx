@@ -12,6 +12,13 @@ import type { WorkView, WorkCandidateView } from '../../services/api.ts';
 
 const STAGE_NAME = WORK_STAGE;
 
+/** 0.4% 这种别被四舍五入成 0%，否则「在读」里会出现一排 0% */
+function pctLabel(p: number): string {
+  if (p <= 0) return '0%';
+  if (p >= 0.9995) return '100%';
+  return p < 0.1 ? `${(p * 100).toFixed(1)}%` : `${Math.round(p * 100)}%`;
+}
+
 export function ShelfPage() {
   const { data, isLoading, error, refetch } = useWorks();
   const { data: cand } = useQuery({
@@ -169,12 +176,14 @@ function WorkCard({ w, index, onAi }: { w: WorkView; index: number; onAi: () => 
   const main = w.parts.filter((p) => !p.supplemental);
   const done = Math.round(w.readPct * 100);
   const stage = w.stage ? label(STAGE_NAME, w.stage) : '未开始';
+  // 直接落到「上次读的那一章」，否则点继续永远从第一章开始
+  const open = () => (w.lastRepId ? navigate('reader', { work: w.work.id, rep: w.lastRepId }) : navigate('reader', { work: w.work.id }));
   return (
     <div className="work-card" data-testid="work-card">
       <button
         className="cover"
         data-kind={w.work.kind}
-        onClick={() => navigate('reader', { work: w.work.id })}
+        onClick={open}
         data-testid="work-read"
         title={w.work.title}
       >
@@ -184,11 +193,11 @@ function WorkCard({ w, index, onAi }: { w: WorkView; index: number; onAi: () => 
         {w.work.desc && <span className="cover-desc">{w.work.desc}</span>}
         <span className="cover-foot">
           <span className="cover-bar" aria-hidden="true"><i style={{ width: `${done}%` }} /></span>
-          <span className="cover-pct mono">{done}%</span>
+          <span className="cover-pct mono">{pctLabel(w.readPct)}</span>
         </span>
       </button>
       <div className="card-meta">
-        <span>{main.length} 章</span>
+        <span>{w.readChapters > 0 ? `${w.readChapters}/${w.chapterCount || main.length} 章` : `${main.length} 章`}</span>
         <span className="card-stage">{stage}</span>
         {w.locked && <span>只读</span>}
         <button className="entry-ai" onClick={onAi} data-testid="work-ask-ai">问助手</button>
@@ -224,14 +233,14 @@ function WorkEntry({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: 
         </div>
 
         <div className="entry-meta">
-          <span>{main.length} 章</span>
+          <span>{w.readChapters > 0 ? `${w.readChapters}/${w.chapterCount || main.length} 章` : `${main.length} 章`}</span>
           {w.annotations > 0 && <span>批注 {w.annotations}</span>}
           {w.derived > 0 && <span>衍生 {w.derived}</span>}
           {w.work.updatedAt && <span>{w.work.updatedAt.slice(0, 10)}</span>}
           {/* 动作跟着文字走，不再单独占右边缘一列 */}
           <button
             className="entry-go"
-            onClick={() => navigate('reader', { work: w.work.id })}
+            onClick={() => (w.lastRepId ? navigate('reader', { work: w.work.id, rep: w.lastRepId }) : navigate('reader', { work: w.work.id }))}
             data-testid="work-read"
           >
             {done > 0 ? '继续读' : '开始读'}
@@ -243,10 +252,10 @@ function WorkEntry({ w, showSup, onAi }: { w: WorkView; showSup: boolean; onAi: 
         {w.next && <p className="entry-note">卡在「{label(STAGE_NAME, w.next.key)}」：{w.next.text}</p>}
         {w.work.desc && <p className="entry-desc">{w.work.desc}</p>}
 
-        {done > 0 && (
+        {w.readPct > 0 && (
           <div className="entry-progress">
             <Bar value={w.readPct} />
-            <span className="mono">{done}%</span>
+            <span className="mono">{pctLabel(w.readPct)}</span>
           </div>
         )}
       </div>
@@ -303,41 +312,61 @@ export function ContinuePage() {
   const { data, isLoading } = useWorks();
   const navigate_ = navigate;
   if (isLoading) return <PageSkeleton rows={3} />;
-  const reading = (data?.works ?? [])
-    .filter((w) => w.readPct > 0 && w.readPct < 0.999)
-    .sort((a, b) => b.readPct - a.readPct);
-  const untouched = (data?.works ?? []).filter((w) => w.readPct === 0);
+  const all = data?.works ?? [];
+  // 上次动过的排前面：按百分比排只会把「读了 3 章的长书」一直压到底
+  const recent = (a: WorkView, b: WorkView) => (b.lastReadAt ?? '').localeCompare(a.lastReadAt ?? '');
+  // 进度是章节覆盖率：读完 8/24 章就是 33%，不会再被「某一章滚到底」顶成 100%
+  const reading = all.filter((w) => !!w.lastReadAt && w.readChapters < w.chapterCount).sort(recent);
+  const finished = all.filter((w) => w.chapterCount > 0 && w.readChapters >= w.chapterCount).sort(recent);
+  const untouched = all.filter((w) => !w.lastReadAt);
+  const open = (w: WorkView) => navigate_('reader', w.lastRepId ? { work: w.work.id, rep: w.lastRepId } : { work: w.work.id });
 
   return (
     <div className="content-wide">
       <PageHead
         eyebrow="知识 · 继续阅读"
         title="继续阅读"
-        lede="按读到哪儿排序。回看不会把最远位置清掉——位置按章记，不按滚动条记。"
+        lede="按最近读过的排。进度按章算——一章滚到底只算这一章，正文章全部读完才是 100%。"
       />
 
-      <Card title="读到一半" desc={`${reading.length} 篇`}>
+      <Card title="在读" desc={`${reading.length} 篇`}>
         {reading.length === 0
-          ? <Empty title="没有读到一半的条目" desc="去书架挑一章开始" action={<button className="btn" onClick={() => navigate('shelf')}>打开书架</button>} />
+          ? <Empty title="没有在读的条目" desc="去书架挑一章开始" action={<button className="btn" onClick={() => navigate('shelf')}>打开书架</button>} />
           : reading.map((w) => (
             <div key={w.work.id} className="part" style={{ padding: '10px 0' }}>
               <span className="part-title ellipsis" style={{ maxWidth: 300 }}>{w.work.title}</span>
               <span style={{ width: 180 }}><Bar value={w.readPct} /></span>
-              <span className="mono" style={{ width: 42 }}>{Math.round(w.readPct * 100)}%</span>
+              <span className="mono" style={{ width: 52 }}>{pctLabel(w.readPct)}</span>
+              <span className="small muted mono">读完 {w.readChapters}/{w.chapterCount} 章</span>
               <span className="small muted">批注 {w.annotations} · 衍生 {w.derived}</span>
               <span className="spacer" />
-              <button className="btn btn-sm btn-primary" onClick={() => navigate_('reader', { work: w.work.id })}>继续</button>
+              <button className="btn btn-sm btn-primary" onClick={() => open(w)}>继续</button>
             </div>
           ))}
       </Card>
 
-      <Card title="还没开始" desc={`${untouched.length} 篇读了 0%`}>
+      <Card title="已读完" desc={`${finished.length} 篇，正文章全部读完`}>
+        {finished.length === 0
+          ? <p className="section-note">还没有整本读完的。</p>
+          : finished.map((w) => (
+            <div key={w.work.id} className="part">
+              <span className="part-title ellipsis">{w.work.title}</span>
+              <span className="small muted mono">{w.readChapters}/{w.chapterCount} 章</span>
+              {w.lastReadAt && <span className="small muted mono">{w.lastReadAt.slice(0, 10)}</span>}
+              <span className="spacer" />
+              <button className="btn btn-sm btn-quiet" onClick={() => open(w)}>重读</button>
+            </div>
+          ))}
+      </Card>
+
+      <Card title="还没开始" desc={`${untouched.length} 篇没打开过`}>
         {untouched.length === 0
           ? <p className="section-note">都开过头的了。</p>
           : untouched.map((w) => (
             <div key={w.work.id} className="part">
               <span className="part-title ellipsis">{w.work.title}</span>
-              <span className="small muted mono">{w.parts.length} 章</span>
+              <span className="small muted mono">{w.chapterCount || w.parts.length} 章</span>
+              <span className="spacer" />
               <button className="btn btn-sm btn-quiet" onClick={() => navigate_('reader', { work: w.work.id })}>开始读</button>
             </div>
           ))}
