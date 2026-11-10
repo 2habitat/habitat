@@ -204,7 +204,7 @@ export function AiPanel() {
   }, [open, session?.id, handleEvent]);
 
   const activeSkill = skills.find((s) => s.id === skillId) ?? null;
-  const modelOption = session?.configOptions?.find((o) => o.id === 'model' || o.category === 'model') ?? null;
+  const modelOption = session?.configOptions?.find((o) => (o.id === 'model' || o.category === 'model') && o.options.length > 0) ?? null;
   const starters = activeSkill?.starters?.length ? activeSkill.starters : SUGGESTIONS;
   const estimate = useMemo(() => {
     let n = ctx.title.length + 120;
@@ -454,7 +454,7 @@ export function AiPanel() {
               <option value="readonly">只读</option>
             </select>
           </label>
-          {session?.configOptions?.length ? session.configOptions.filter((o) => o.id !== modelOption?.id).map((o) => (
+          {session?.configOptions?.length ? session.configOptions.filter((o) => o.id !== modelOption?.id && o.options.length > 0).map((o) => (
             <label key={o.id}>{o.name}
               <select
                 className="select select-sm"

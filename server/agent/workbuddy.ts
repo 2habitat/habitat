@@ -249,6 +249,9 @@ export class WorkbuddyHttpDriver {
     const env = { ...process.env, ...(this.cfg.env ?? {}) };
     delete env.NODE_OPTIONS;
     delete env.NODE_PATH;
+    // 这个 WorkBuddy 安装只带 codebuddy-lite-wb.mjs；--acp 会让入口走 headless，
+    // 而 headless/full bundle 都不在。显式让它走 lite-wb（宿主本来也这么设）。
+    env.CODEBUDDY_FORCE_LITE_WB_BUNDLE = '1';
     this.child = spawn(spawnCmd, spawnArgs, {
       cwd,
       env,
