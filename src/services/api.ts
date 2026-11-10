@@ -320,7 +320,7 @@ export const endpoints = {
   }>('/api/agent/harnesses'),
   agentProbe: (id: string) => api.post<{ ok: boolean; harness: HarnessView }>(`/api/agent/harnesses/${encodeURIComponent(id)}/probe`),
   agentPair: (label?: string) => api.post<{ ok: boolean; code: string; expiresAt: string }>('/api/agent/pair', { label }),
-  agentConfigFile: () => api.get<{ ok: boolean; path: string; raw: string; exists: boolean; source: string; error?: string }>('/api/agent/config'),
+  agentConfigFile: () => api.get<{ ok: boolean; path: string; raw: string; exists: boolean; source: string; defaultRaw?: string; error?: string }>('/api/agent/config'),
   saveAgentConfigFile: (raw: string) => api.putJson<{ ok: boolean; path: string; source: string; default: string; harnesses: number }>('/api/agent/config', { raw }),
   agentSkills: () => api.get<{ ok: boolean; skills: AgentSkill[] }>('/api/agent/skills'),
   agentCreate: (b: {

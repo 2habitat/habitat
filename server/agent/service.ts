@@ -20,7 +20,7 @@ import { AcpDriver, type DriverEvent, type DriverStartInput } from './acp.ts';
 import { WorkbuddyHttpDriver } from './workbuddy.ts';
 import { RemoteAcpDriver } from './remote.ts';
 import { MockDriver } from './mock.ts';
-import { harnessById, loadHarnessFile } from './config.ts';
+import { harnessById, loadHarnessFile, patchPathFor, sessionCwd, withModelOverlay } from './config.ts';
 import { compileSkill, loadSkills, skillById } from './skills.ts';
 import { packContext, parseOutline, locateQuote, sectionAt } from './context.ts';
 import {
@@ -180,6 +180,8 @@ export class AgentSession {
   private autoChars = 0;
   readonly reportedLoops = new Set<string>();
   lastPack?: { usedChars: number; omitted: string[] };
+  /** 本次会话用的模型覆盖层文件；没有配 models 就是 undefined */
+  patchPath?: string;
 
   constructor(
     private readonly hab: Habitat,
@@ -254,24 +256,42 @@ export class AgentSession {
     }
   }
 
+  /** 文件级默认模型路由：harness 自己没写 models 时继承 */
+  private modelsDefault() {
+    return loadHarnessFile(this.opts.root).models;
+  }
+
   private async start(): Promise<void> {
     try {
-      const cwd = path.join(this.opts.root, '.habitat', 'state', 'agent', this.id, 'cwd');
+      // cwd：agents.yaml 配了就用它（相对空间根），没配才用会话沙箱
+      const cwd = sessionCwd(this.opts.root, this.cfg, this.id);
       fs.mkdirSync(cwd, { recursive: true });
-      fs.writeFileSync(path.join(cwd, 'README.md'), [
-        '# Habitat agent sandbox',
-        '',
-        '这个目录是空的。不要在这里找知识库内容；',
-        '所有读写都通过 habitat 的 MCP 工具（kb_*）完成。',
-      ].join('\n'), 'utf8');
+      const isSandbox = !this.cfg.cwd;
+      if (isSandbox) {
+        fs.writeFileSync(path.join(cwd, 'README.md'), [
+          '# Habitat agent sandbox',
+          '',
+          '这个目录是空的。不要在这里找知识库内容；',
+          '所有读写都通过 habitat 的 MCP 工具（kb_*）完成。',
+        ].join('\n'), 'utf8');
+      }
 
-      const driver = this.cfg.driver === 'mock'
+      // 模型路由走启动覆盖层（dsh: --patch），不改 harness 自己的 profile；
+      // 非 acp harness 没有这种启动参数，静默跳过而不是每次开会话就报错。
+      const overlay = this.cfg.driver === 'acp'
+        ? withModelOverlay(this.opts.root, this.cfg, this.modelsDefault())
+        : { harness: this.cfg as HarnessConfig };
+      if (overlay.error) this.emit({ t: 'error', code: 'model_overlay', message: overlay.error, recoverable: true });
+      this.patchPath = overlay.patchPath;
+      const runCfg = overlay.harness;
+
+      const driver = runCfg.driver === 'mock'
         ? new MockDriver()
-        : this.cfg.driver === 'http'
-          ? new WorkbuddyHttpDriver(this.cfg)
-          : this.cfg.driver === 'remote'
-            ? new RemoteAcpDriver(this.cfg)
-            : new AcpDriver(this.cfg);
+        : runCfg.driver === 'http'
+          ? new WorkbuddyHttpDriver(runCfg)
+          : runCfg.driver === 'remote'
+            ? new RemoteAcpDriver(runCfg)
+            : new AcpDriver(runCfg);
       this.driver = driver;
 
       const publicBase = (process.env.HABITAT_PUBLIC_URL || this.opts.baseUrl).replace(/\/+$/, '');
@@ -788,7 +808,8 @@ export class AgentService {
       const installed = h.driver === 'mock' || h.driver === 'remote'
         ? true
         : Boolean(h.command && fs.existsSync(h.command)) || Boolean(findOnPath(h.command));
-      return { ...publicHarness(h), installed };
+      // 只算路径不落盘：GET 不写文件，覆盖层等真正开会话时再生成
+      return { ...publicHarness(h), installed, patchPath: h.models ? patchPathFor(this.opts.root, h.id) : undefined };
     });
     return { file, list };
   }
@@ -848,13 +869,16 @@ export class AgentService {
       await caps.close();
       return { ...publicHarness(cfg), installed: true, caps: r.caps };
     }
-    const driver = cfg.driver === 'remote'
-      ? new RemoteAcpDriver(cfg)
-      : cfg.driver === 'http' ? new WorkbuddyHttpDriver(cfg) : new AcpDriver(cfg);
+    // 探测也挂覆盖层：不然「探测通过」和真实会话看到的模型可能不是一套
+    const overlay = withModelOverlay(this.opts.root, cfg, loadHarnessFile(this.opts.root).models);
+    const runCfg = overlay.harness;
+    const driver = runCfg.driver === 'remote'
+      ? new RemoteAcpDriver(runCfg)
+      : runCfg.driver === 'http' ? new WorkbuddyHttpDriver(runCfg) : new AcpDriver(runCfg);
     try {
       const r = await driver.start({
         sessionId: 'probe',
-        cwd: path.join(this.opts.root, '.habitat', 'state', 'agent-probe', 'cwd'),
+        cwd: sessionCwd(this.opts.root, cfg, 'probe'),
         mcpUrl: `${this.opts.baseUrl()}/api/agent/mcp`,
         token: 'probe',
         withMcp: false,
@@ -862,11 +886,11 @@ export class AgentService {
       });
       await driver.close();
       this.probeCache.set(id, { at: Date.now(), caps: r.caps });
-      return { ...publicHarness(cfg), installed: true, caps: r.caps };
+      return { ...publicHarness(cfg), installed: true, caps: r.caps, patchPath: overlay.patchPath };
     } catch (e) {
       await driver.close().catch(() => undefined);
       this.probeCache.set(id, { at: Date.now(), error: (e as Error).message });
-      return { ...publicHarness(cfg), installed: false, probeError: (e as Error).message };
+      return { ...publicHarness(cfg), installed: false, probeError: overlay.error ?? (e as Error).message, patchPath: overlay.patchPath };
     }
   }
 
@@ -1073,8 +1097,10 @@ export class AgentService {
 
 /** 对外视图不带 env：里面可能有密钥，不能经 /api/agent/harnesses 回给浏览器 */
 function publicHarness(h: HarnessConfig): Omit<HarnessConfig, 'env' | 'token'> {
-  const { env: _env, token: _token, ...rest } = h;
-  return rest;
+  const { env: _env, token: _token, models, ...rest } = h;
+  if (!models) return rest;
+  // headers 里可能有 Authorization：只下发路由与模型清单，不下发请求头
+  return { ...rest, models: { ...models, routes: models.routes.map(({ headers: _h, ...r }) => r) } };
 }
 
 function findOnPath(command?: string): string {

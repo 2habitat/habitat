@@ -131,14 +131,13 @@ harnesses:
     driver: acp
     command: dsh
     args: ["--profile", "acp"]
-    cwd: .habitat/state/agent-cwd
     env:
       # 原生文件/终端只读；写入只能走 session MCP
       DSH_PERMISSION_MODE: read-only
     context: { maxChars: 24000 }
     approvals: { annotations: ask, body: ask }
     # 模型与推理强度不写死：session/new 返回 configOptions，UI 选择后用
-    # session/set_config_option 设置
+    # session/set_config_option 设置；要平台侧统一配，见 3.1.1
 
   - id: workbuddy
     label: WorkBuddy CLI（本机）
@@ -173,6 +172,44 @@ harnesses:
   实现上它与外部 ACP CLI 共用 `AcpDriver`，只是 `command/args` 不同。
 - Windows 下 `command` 允许 `.cmd`（如 `dsh.cmd`）；服务端 spawn 时用完整路径，
   不走 shell，避免空格路径和引号被二次解释。跨平台更稳的写法是 `node <bin.js>`。
+- `cwd` 配了就按空间根解析（全空间共用一个工作区）；不配则每个会话一个独立沙箱
+  （`.habitat/state/agent/<session>/cwd`），两种语义不混用。
+
+### 3.1.1 模型路由：平台把声明翻译成启动覆盖层
+
+平台不代理推理，也不维护模型目录。`harness.models` 只是一份「端点 + 模型」的声明，
+加载时翻译成 harness 自己的启动参数：
+
+| 声明 | 落到哪 |
+|---|---|
+| `models.routes[]` | dsh 的 `llm-pi-ai.providers`（插件 id 由 `routePluginId` 指定） |
+| `models.default` | `agent-default-model` 与 `acp` 两个入口，否则会话仍用 harness 自带默认 |
+| 整体 | `.habitat/state/harness/<harness-id>.patch.yml` + 命令行追加 `--patch <绝对路径>` |
+
+```yaml
+harnesses:
+  - id: dsh
+    driver: acp
+    args: ["--profile", "acp"]
+    models:
+      default: { provider: local, model: qwen3.8-flash }
+      routes:
+        - provider: local
+          api: openai-completions
+          baseURL: http://127.0.0.1:8080/v1
+          headers: { Authorization: "Bearer local" }   # 无鉴权网关的占位头
+          models:
+            - { id: qwen3.8-flash, name: Qwen3.8, contextWindow: 1000000, input: [text, image] }
+```
+
+约束：
+
+- 只有 `driver: acp` 生效；HTTP / 远端 harness 没有 `--patch`，写了会明确报错。
+- `apiKeyEnv` 只写**引用名**，真值走凭据服务或 `${ENV}`；无鉴权网关至少要给
+  `headers.Authorization`，否则 pi-ai 在发请求前就抛 `No API key for provider`。
+- 覆盖层在开会话/探测时重写（幂等）；会话 cwd 是独立沙箱，所以路径必须是绝对的。
+- 改 `models` 只影响**新会话**：已建立的会话进程不会重读覆盖层。
+- 模型清单仍是 harness 说了算：平台只负责把端点递进去，`session/new` 返回什么就展示什么。
 
 ### 3.2 驱动接口
 

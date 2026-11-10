@@ -7,7 +7,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Habitat } from '../../server/core/space.ts';
 import { makeSpace, rmSpace, N1, R1 } from '../helpers/space.ts';
-import { loadHarnessFile, defaultHarnessFile } from '../../server/agent/config.ts';
+import { loadHarnessFile, defaultHarnessFile, defaultHarnessYaml, patchPathFor, sessionCwd, withModelOverlay } from '../../server/agent/config.ts';
+import { normalizeOptions, quoteShellArg } from '../../server/agent/acp.ts';
+import { parse as yamlParse } from 'yaml';
 import { locateQuote, parseOutline, packContext } from '../../server/agent/context.ts';
 import { compileSkill, loadSkills, skillById } from '../../server/agent/skills.ts';
 import { AgentService } from '../../server/agent/service.ts';
@@ -70,6 +72,96 @@ describe('harness 配置', () => {
     const bad = loadHarnessFile(dir);
     expect(bad.source).toBe('default');
     expect(bad.harnesses.length).toBe(defaultHarnessFile().harnesses.length);
+  });
+});
+
+describe('模型路由覆盖层', () => {
+  const agentsYaml = [
+    'version: 1',
+    'default: dsh',
+    'harnesses:',
+    '  - id: dsh',
+    '    label: 平台内置 dsh',
+    '    driver: acp',
+    '    command: node',
+    '    args: ["--profile", "acp"]',
+    '    models:',
+    '      default: { provider: local, model: qoder/qwen }',
+    '      routes:',
+    '        - provider: local',
+    '          api: openai-completions',
+    '          baseURL: http://127.0.0.1:8080/v1',
+    '          headers: { Authorization: "Bearer local" }',
+    '          models:',
+    '            - id: qoder/qwen',
+    '              name: qwen',
+    '              contextWindow: 1000000',
+    '              input: [text, image]',
+  ].join('\n');
+
+  it('models 会生成 dsh --patch，并把默认模型钉到 ACP 会话', () => {
+    fs.writeFileSync(path.join(dir, 'agents.yaml'), agentsYaml);
+    const f = loadHarnessFile(dir);
+    expect(f.harnesses[0].models?.routes[0].provider).toBe('local');
+
+    const out = withModelOverlay(dir, f.harnesses[0], f.models);
+    expect(out.error).toBeUndefined();
+    expect(out.patchPath).toBe(patchPathFor(dir, 'dsh'));
+    expect(out.harness.args).toContain('--patch');
+    expect(out.harness.args).toContain(out.patchPath);
+
+    const doc = yamlParse(fs.readFileSync(out.patchPath!, 'utf8')) as { id: string; config: Record<string, unknown> }[];
+    expect(doc.map((e) => e.id)).toEqual(['llm-pi-ai', 'agent-default-model', 'acp']);
+    const local = (doc[0].config.providers as Record<string, { baseURL: string; headers: Record<string, string>; models: { id: string }[] }>).local;
+    expect(local.baseURL).toBe('http://127.0.0.1:8080/v1');
+    // 无鉴权网关也得有占位头，否则 pi-ai 直接拒绝发请求
+    expect(local.headers.Authorization).toBe('Bearer local');
+    expect(local.models[0].id).toBe('qoder/qwen');
+    expect(doc[2].config).toEqual({ provider: 'local', model: 'qoder/qwen' });
+  });
+
+  it('重复挂载不叠加 --patch；非 acp harness 明确报错', () => {
+    fs.writeFileSync(path.join(dir, 'agents.yaml'), agentsYaml);
+    const cfg = loadHarnessFile(dir).harnesses[0];
+    const once = withModelOverlay(dir, cfg, undefined);
+    const twice = withModelOverlay(dir, once.harness, undefined);
+    expect(twice.harness.args?.filter((a) => a === '--patch').length).toBe(1);
+
+    const http = withModelOverlay(dir, { ...cfg, id: 'wb', driver: 'http' }, undefined);
+    expect(http.patchPath).toBeUndefined();
+    expect(http.error).toContain('acp');
+  });
+
+  it('cwd 配了按空间根解析，没配用每会话沙箱', () => {
+    const base = { id: 'dsh', label: 'd', driver: 'acp' as const };
+    expect(sessionCwd(dir, base, 'sess1')).toBe(path.join(dir, '.habitat', 'state', 'agent', 'sess1', 'cwd'));
+    expect(sessionCwd(dir, { ...base, cwd: '.habitat/state/agent-cwd' }, 'sess1'))
+      .toBe(path.join(dir, '.habitat', 'state', 'agent-cwd'));
+    // 内置默认不写 cwd：默认行为必须是每会话独立，别让两个会话共享一个工作区
+    expect(defaultHarnessFile().harnesses.every((h) => !h.cwd)).toBe(true);
+  });
+
+  it('模型选项保留 provider 分组，前端才能按组渲染', () => {
+    const opts = normalizeOptions([{
+      id: 'model', name: 'Model', type: 'select', currentValue: '["local","m"]',
+      options: [
+        { group: 'deepseek-official', name: 'DeepSeek', options: [{ value: '["deepseek-official","flash"]', name: 'Flash' }] },
+        { group: 'local', name: 'local', options: [{ value: '["local","m"]', name: 'm' }] },
+      ],
+    }]);
+    expect(opts[0].options.map((o) => o.group)).toEqual(['deepseek-official', 'local']);
+    expect(opts[0].options.map((o) => o.name)).toEqual(['Flash', 'm']);
+  });
+
+  it('没有 agents.yaml 时给的是等价草稿，不是空白', () => {
+    const draft = yamlParse(defaultHarnessYaml()) as { harnesses: { id: string }[] };
+    expect(draft.harnesses.some((h) => h.id === 'dsh')).toBe(true);
+    expect(draft.harnesses.length).toBe(defaultHarnessFile().harnesses.length);
+  });
+
+  it('shell 启动时给带空格的路径加引号', () => {
+    expect(quoteShellArg('D:/works/plain/dsh.patch.yml')).toBe('D:/works/plain/dsh.patch.yml');
+    expect(quoteShellArg('D:/my works/dsh.patch.yml')).toBe('"D:/my works/dsh.patch.yml"');
   });
 });
 

@@ -142,7 +142,7 @@ export function AgentPage() {
   const [probing, setProbing] = useState('');
   const [agentStat, setAgentStat] = useState<{ active: number; total: number; turns: number; errors: number; avgTurnMs: number } | null>(null);
   const [pair, setPair] = useState<{ code: string; expiresAt: string } | null>(null);
-  const [configFile, setConfigFile] = useState<{ path: string; raw: string; exists: boolean; source: string; error?: string } | null>(null);
+  const [configFile, setConfigFile] = useState<{ path: string; raw: string; exists: boolean; source: string; defaultRaw?: string; error?: string } | null>(null);
   const [editingConfig, setEditingConfig] = useState(false);
   const [configRaw, setConfigRaw] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
@@ -178,7 +178,8 @@ export function AgentPage() {
     try {
       const r = await endpoints.agentConfigFile();
       setConfigFile(r);
-      setConfigRaw(r.raw);
+      // 没有 agents.yaml 时编辑器不该是空白：填内置等价配置，让人看见正在跑什么
+      setConfigRaw(r.raw || r.defaultRaw || '');
       setEditingConfig(true);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), 'err');
@@ -276,8 +277,15 @@ export function AgentPage() {
             <code className="mono small muted">{configFile?.path ?? 'agents.yaml'}</code>
           </div>
           <p className="small muted" style={{ margin: '6px 0 8px' }}>
-            保存后立即生效；YAML 不合法会拒绝并保留原文件。远端 token 不要写进这里，用 <code>{'${ENV}'}</code> 或配对码。
+            保存后立即重载；YAML 不合法会拒绝并保留原文件。远端 token 不要写进这里，用 <code>{'${ENV}'}</code> 或配对码。
+            模型路由的改动只对<strong>新会话</strong>生效——已开的会话进程不会重读。
           </p>
+          {configFile && !configFile.exists && (
+            <div className="notice" data-testid="agent-config-default" style={{ marginBottom: 8 }}>
+              这个空间还没有 <code>agents.yaml</code>。下面是<strong>正在生效</strong>的内置配置，改完点保存才会落盘；
+              模型路由写在 harness 的 <code>models</code> 里，平台会生成 <code>.habitat/state/harness/&lt;id&gt;.patch.yml</code> 并以 <code>--patch</code> 传给 harness。
+            </div>
+          )}
           <textarea
             className="input mono"
             style={{ width: '100%', minHeight: 260, resize: 'vertical', fontSize: 12, lineHeight: 1.55 }}
@@ -324,7 +332,10 @@ export function AgentPage() {
               <span className="cap-flag" data-write={h.installed === false ? '0' : '1'}>{h.installed === false ? '未找到' : '可用'}</span>
               <span className="cap-name">{h.label}</span>
               <span className="cap-agent mono ellipsis" title={h.command ?? h.endpoint ?? ''}>
-                {h.driver} · {h.caps ? `ACP ${h.caps.protocolVersion ?? '?'} · MCP ${h.caps.mcp.http ? 'http' : '—'}` : (h.command ?? h.endpoint ?? '')}
+                {h.driver}
+                {h.models ? ` · ${h.models.routes.length} 条路由 / ${h.models.routes.reduce((n, r) => n + r.models.length, 0)} 个模型` : ''}
+                {' · '}
+                {h.caps ? `ACP ${h.caps.protocolVersion ?? '?'} · MCP ${h.caps.mcp.http ? 'http' : '—'}` : (h.command ?? h.endpoint ?? '')}
               </span>
               <button
                 className="btn btn-sm btn-quiet"

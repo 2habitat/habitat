@@ -35,11 +35,19 @@ interface Pending {
 
 const PROTOCOL_VERSION = 1;
 
+/**
+ * shell 模式下 Node 把 command 与 args 拼成一行，不会替我们加引号：
+ * 路径里有空格（空间目录、--patch 覆盖层）就会被拆成两个参数。
+ */
+export function quoteShellArg(a: string): string {
+  return /\s/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a;
+}
+
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' ? v as Record<string, unknown> : {};
 }
 
-function normalizeOptions(raw: unknown): ConfigOption[] {
+export function normalizeOptions(raw: unknown): ConfigOption[] {
   if (!Array.isArray(raw)) return [];
   const out: ConfigOption[] = [];
   for (const item of raw) {
@@ -51,9 +59,18 @@ function normalizeOptions(raw: unknown): ConfigOption[] {
     for (const opt of rawOptions) {
       const x = asRecord(opt);
       if (Array.isArray(x.options)) {
+        // 分组（如 provider）：组名一路带到前端，否则同名模型分不清来源
+        const group = String(x.group ?? x.name ?? '');
         for (const child of x.options) {
           const c = asRecord(child);
-          if (c.value !== undefined) choices.push({ value: String(c.value), name: String(c.name ?? c.value), description: c.description ? String(c.description) : undefined });
+          if (c.value !== undefined) {
+            choices.push({
+              value: String(c.value),
+              name: String(c.name ?? c.value),
+              description: c.description ? String(c.description) : undefined,
+              group: group || undefined,
+            });
+          }
         }
       } else if (x.value !== undefined) {
         choices.push({ value: String(x.value), name: String(x.name ?? x.value), description: x.description ? String(x.description) : undefined });
@@ -94,7 +111,7 @@ class AcpProcess {
     // npm 全局包的 bin 是没有扩展名的 node 脚本；Windows 不能直接 spawn，交给 node
     const isScript = !/\.(cmd|bat|exe)$/i.test(cmd) && fs.existsSync(cmd);
     const spawnCmd = isScript ? process.execPath : cmd;
-    const spawnArgs = isScript ? [cmd, ...this.args] : this.args;
+    const spawnArgs = (isScript ? [cmd, ...this.args] : this.args).map((a) => (useShell ? quoteShellArg(a) : a));
     const env = { ...this.env };
     delete env.NODE_OPTIONS;
     delete env.NODE_PATH;

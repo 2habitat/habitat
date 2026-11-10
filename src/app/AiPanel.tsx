@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { endpoints } from '../services/api.ts';
-import type { AgentEvent, AgentSkill, AnnotationSuggestion, HarnessView, SessionView } from '../../shared/agent.ts';
+import type { AgentEvent, AgentSkill, AnnotationSuggestion, ConfigOptionChoice, HarnessView, SessionView } from '../../shared/agent.ts';
 import { useUi, type AiContext } from './ui.ts';
 import { useRefresh } from '../services/use.ts';
 import { Icon } from '../components/icons.tsx';
@@ -407,7 +407,7 @@ export function AiPanel() {
           data-testid="ai-model"
         >
           {modelOption
-            ? modelOption.options.map((o) => <option key={o.value} value={o.value}>{o.name}</option>)
+            ? <ChoiceOptions choices={modelOption.options} />
             : <option value="">模型：先发一条消息</option>}
         </select>
         <select
@@ -465,7 +465,7 @@ export function AiPanel() {
                   });
                 }}
               >
-                {o.options.map((x) => <option key={x.value} value={x.value}>{x.name}</option>)}
+                <ChoiceOptions choices={o.options} />
               </select>
             </label>
           )) : null}
@@ -608,6 +608,22 @@ export function AiFab() {
       <Icon name="assistant" size={15} />
       助手
     </button>
+  );
+}
+
+/** 按 group 渲染 optgroup：同名模型来自不同 provider 时，人得能看出区别 */
+function ChoiceOptions({ choices }: { choices: ConfigOptionChoice[] }) {
+  const groups = new Map<string, ConfigOptionChoice[]>();
+  for (const c of choices) {
+    const key = c.group ?? '';
+    groups.set(key, [...(groups.get(key) ?? []), c]);
+  }
+  return (
+    <>
+      {[...groups].map(([group, items]) => (group
+        ? <optgroup key={group} label={group}>{items.map((o) => <option key={o.value} value={o.value}>{o.name}</option>)}</optgroup>
+        : items.map((o) => <option key={o.value} value={o.value}>{o.name}</option>)))}
+    </>
   );
 }
 

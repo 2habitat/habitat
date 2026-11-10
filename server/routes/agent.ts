@@ -11,7 +11,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Habitat } from '../core/space.ts';
 import type { AgentEvent, ApprovalPolicy, ContextRef, SessionFocus } from '../../shared/agent.ts';
 import type { AgentService } from '../agent/service.ts';
-import { loadHarnessFile } from '../agent/config.ts';
+import { defaultHarnessYaml, loadHarnessFile } from '../agent/config.ts';
 
 export interface AgentRouteDeps {
   hab: Habitat;
@@ -243,7 +243,16 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     const file = path.join(hab.store.root, 'agents.yaml');
     const raw = await fs.promises.readFile(file, 'utf8').catch(() => '');
     const loaded = loadHarnessFile(hab.store.root);
-    return { ok: true, path: file, raw, exists: Boolean(raw), source: loaded.source, error: loaded.source === 'default' && raw ? loaded.path : undefined };
+    return {
+      ok: true,
+      path: file,
+      raw,
+      exists: Boolean(raw),
+      source: loaded.source,
+      // 没文件时编辑器不该是空白：把正在跑的内置配置等价地摆出来
+      defaultRaw: raw ? undefined : defaultHarnessYaml(),
+      error: loaded.source === 'default' && raw ? loaded.path : undefined,
+    };
   });
 
   app.put('/api/agent/config', async (req, reply) => {
