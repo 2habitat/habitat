@@ -1,29 +1,42 @@
 /**
- * 页内助手（设计方案 §7）
- * 三条硬要求：
- *  · 每次可见：带入对象、可见范围、预算、允许动作
- *  · 回答必须带依据（条目或段落），不能编造；检索为空就说空
- *  · 每条回复至少有一个可执行动作
+ * 页内助手（Agent 会话层）。
  *
- * 这里没有接大模型：回答由本地检索结果拼装，句句有出处。
- * 接 LLM 的位置在 `ask()` 里的 compose —— 换掉它即可，其余（依据、动作、事件）不动。
+ * 这里不再有「本地检索 if/else」：界面只消费 /api/agent/sessions/:id/events 的事件流。
+ * 换 harness、换技能、换审批策略都不改这个组件的主结构。
  */
-import { useEffect, useRef, useState } from 'react';
-import { endpoints, type SearchView, type TodayView, type FlowView } from '../services/api.ts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { endpoints } from '../services/api.ts';
+import type { AgentEvent, AgentSkill, AnnotationSuggestion, HarnessView, SessionView } from '../../shared/agent.ts';
 import { useUi, type AiContext } from './ui.ts';
-import { navigate } from './router.ts';
-import { Chip } from '../components/ui.tsx';
+import { useRefresh } from '../services/use.ts';
 import { Icon } from '../components/icons.tsx';
-import { extractKey, keyFallbacks } from '../../shared/ai.ts';
 
-interface Evidence { id: string; title: string; type: string; snippet: string }
-interface ActionBtn { label: string; run: () => void | Promise<void> }
+interface ToolCard {
+  callId: string;
+  name: string;
+  tier: string;
+  phase: 'start' | 'end';
+  title?: string;
+  summary?: string;
+  ok?: boolean;
+}
+
 interface Msg {
+  id: string;
   role: 'me' | 'ai';
   text: string;
-  evidence?: Evidence[];
-  actions?: ActionBtn[];
-  budget?: { used: number; limit: number };
+  streaming?: boolean;
+  tools?: ToolCard[];
+  suggestions?: AnnotationSuggestion[];
+  error?: boolean;
+}
+
+interface PendingPermission {
+  requestId: string;
+  kind: 'tool' | 'proposal';
+  action: string;
+  preview: string;
+  proposalId?: string;
 }
 
 const SUGGESTIONS = [
@@ -34,220 +47,422 @@ const SUGGESTIONS = [
   '帮我找关于状态的内容',
 ];
 
+let msgSeq = 1;
+const nextMsgId = () => `m-${msgSeq++}`;
+
 export function AiPanel() {
   const open = useUi((s) => s.aiOpen);
   const close = useUi((s) => s.closeAi);
   const ctx = useUi((s) => s.aiCtx);
-  const openSheet = useUi((s) => s.openSheet);
+  const surface = useUi((s) => s.aiSurface);
+  const setSurface = useUi((s) => s.setAiSurface);
+  const floatBox = useUi((s) => s.aiFloat);
+  const setFloat = useUi((s) => s.setAiFloat);
+  const refs = useUi((s) => s.aiRefs);
+  const removeRef = useUi((s) => s.removeAiRef);
+  const harnessId = useUi((s) => s.aiHarnessId);
+  const setHarness = useUi((s) => s.setAiHarness);
+  const skillId = useUi((s) => s.aiSkillId);
+  const setSkill = useUi((s) => s.setAiSkill);
+  const approvals = useUi((s) => s.aiApprovals);
+  const setApprovals = useUi((s) => s.setAiApprovals);
   const toast = useUi((s) => s.toast);
-  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const refresh = useRefresh();
+
+  const [harnesses, setHarnesses] = useState<HarnessView[]>([]);
+  const [skills, setSkills] = useState<AgentSkill[]>([]);
+  const [session, setSession] = useState<SessionView | null>(null);
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [budget, setBudget] = useState({ used: 0, limit: 3 });
+  const [statusText, setStatusText] = useState('');
+  const [pending, setPending] = useState<PendingPermission | null>(null);
+  const [lastPack, setLastPack] = useState<{ usedChars: number; omitted: string[] } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<SessionView | null>(null);
+  sessionRef.current = session;
+  const ctxRef = useRef<AiContext>(ctx);
+  ctxRef.current = ctx;
+  const refsRef = useRef(refs);
+  refsRef.current = refs;
+
+  useEffect(() => {
+    if (!open) return;
+    void endpoints.agentHarnesses().then((r) => {
+      setHarnesses(r.harnesses);
+      if (!harnessId) {
+        const first = r.harnesses.find((h) => h.enabled !== false && h.installed !== false);
+        if (first) setHarness(first.id);
+      }
+    }).catch(() => undefined);
+    void endpoints.agentSkills().then((r) => setSkills(r.skills)).catch(() => undefined);
+  }, [open, harnessId, setHarness]);
+
+  // 换焦点就是换上下文：旧会话不能继续带着上一章回答，也别把进程留在后台
+  useEffect(() => {
+    const old = sessionRef.current;
+    sessionRef.current = null;
+    if (old) void endpoints.agentClose(old.id).catch(() => undefined);
+    setSession(null);
+    setMessages([]);
+    setPending(null);
+    setLastPack(null);
+  }, [ctx.id, ctx.kind]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' });
-  }, [msgs, open]);
+  }, [messages, open]);
+
+  const handleEvent = useCallback((e: AgentEvent) => {
+    switch (e.t) {
+      case 'ready':
+        setSession((s) => (s ? { ...s, status: 'ready', caps: e.caps, configOptions: e.configOptions } : s));
+        setStatusText('');
+        break;
+      case 'turn':
+        if (e.phase === 'start') {
+          setBusy(true);
+          setStatusText('正在想…');
+          setMessages((prev) => [...prev, { id: nextMsgId(), role: 'ai', text: '', streaming: true, tools: [], suggestions: [] }]);
+        } else {
+          setBusy(false);
+          setStatusText('');
+          setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)));
+          const active = sessionRef.current;
+          if (active) {
+            void endpoints.agentSession(active.id).then((r) => {
+              setLastPack(r.lastPack as { usedChars: number; omitted: string[] } | null);
+            }).catch(() => undefined);
+          }
+        }
+        break;
+      case 'text':
+        setMessages((prev) => {
+          const next = [...prev];
+          const idx = next.map((m) => m.role === 'ai' && m.streaming).lastIndexOf(true);
+          if (idx >= 0) next[idx] = { ...next[idx], text: next[idx].text + e.delta };
+          else next.push({ id: nextMsgId(), role: 'ai', text: e.delta, streaming: true, tools: [], suggestions: [] });
+          return next;
+        });
+        break;
+      case 'thought':
+        setStatusText('正在想…');
+        break;
+      case 'tool':
+        setStatusText(e.phase === 'end' ? '' : `${e.title ?? e.name}…`);
+        setMessages((prev) => {
+          const next = [...prev];
+          const idx = next.map((m) => m.role === 'ai' && m.streaming).lastIndexOf(true);
+          if (idx < 0) return next;
+          const cur = next[idx];
+          const tools = [...(cur.tools ?? [])];
+          const at = tools.findIndex((t) => t.callId === e.callId);
+          const card: ToolCard = { callId: e.callId, name: e.name, tier: e.tier, phase: e.phase, title: e.title, summary: e.summary, ok: e.ok };
+          if (at >= 0) tools[at] = { ...tools[at], ...card };
+          else tools.push(card);
+          next[idx] = { ...cur, tools };
+          return next;
+        });
+        break;
+      case 'permission':
+        setPending({ requestId: e.requestId, kind: e.kind, action: e.action, preview: e.preview, proposalId: e.proposalId });
+        break;
+      case 'annotation':
+        setMessages((prev) => {
+          const next = [...prev];
+          const idx = next.map((m) => m.role === 'ai' && m.streaming).lastIndexOf(true);
+          if (idx >= 0) next[idx] = { ...next[idx], suggestions: [...(next[idx].suggestions ?? []), ...e.items] };
+          else next.push({ id: nextMsgId(), role: 'ai', text: '', suggestions: e.items });
+          return next;
+        });
+        if (e.accepted) {
+          toast('AI 已按自动模式写入批注', 'ok');
+          refresh();
+        }
+        break;
+      case 'config':
+        setSession((s) => (s ? { ...s, configOptions: e.options } : s));
+        break;
+      case 'error':
+        setBusy(false);
+        setStatusText('');
+        setMessages((prev) => [...prev, { id: nextMsgId(), role: 'ai', text: e.message, error: true }]);
+        break;
+    }
+  }, [refresh, toast]);
 
   useEffect(() => {
-    endpoints.system().then((s) => setBudget({ used: s.budget.usedToday, limit: s.budget.dailyProposalLimit })).catch(() => undefined);
-  }, [open]);
+    if (!open || !session) return;
+    const es = new EventSource(`/api/agent/sessions/${encodeURIComponent(session.id)}/events`);
+    es.onmessage = (ev) => {
+      try { handleEvent(JSON.parse(ev.data) as AgentEvent); } catch { /* 坏帧跳过 */ }
+    };
+    es.onerror = () => setStatusText('连接中断，正在重连…');
+    return () => es.close();
+  }, [open, session?.id, handleEvent]);
+
+  const activeSkill = skills.find((s) => s.id === skillId) ?? null;
+  const starters = activeSkill?.starters?.length ? activeSkill.starters : SUGGESTIONS;
+  const estimate = useMemo(() => {
+    let n = ctx.title.length + 120;
+    for (const r of refs) n += (r.quote?.quote.length ?? r.title.length) + 80;
+    return n;
+  }, [ctx.title, refs]);
+
+  async function ensureSession(): Promise<SessionView | null> {
+    if (sessionRef.current) return sessionRef.current;
+    const c = ctxRef.current;
+    try {
+      const r = await endpoints.agentCreate({
+        harnessId: harnessId || undefined,
+        focus: {
+          kind: ['rep', 'note', 'work'].includes(c.kind) ? c.kind : 'none',
+          id: c.id,
+          title: c.title,
+          revision: c.revision ?? 0,
+        },
+        refs: refsRef.current,
+        skillId: skillId === 'none' ? undefined : skillId,
+        approvals,
+      });
+      setSession(r.session);
+      return r.session;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+      return null;
+    }
+  }
+
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || busy) return;
+    setInput('');
+    setMessages((prev) => [...prev, { id: nextMsgId(), role: 'me', text: q }]);
+    const s = await ensureSession();
+    if (!s) return;
+    setBusy(true);
+    setStatusText('正在准备…');
+    try {
+      await endpoints.agentTurn(s.id, q, refsRef.current);
+    } catch (e) {
+      setBusy(false);
+      setStatusText('');
+      setMessages((prev) => [...prev, { id: nextMsgId(), role: 'ai', text: e instanceof Error ? e.message : String(e), error: true }]);
+    }
+  }
+
+  async function acceptSuggestion(s: AnnotationSuggestion, repId: string) {
+    const active = sessionRef.current;
+    if (!active) return;
+    try {
+      const r = await endpoints.agentAcceptAnnotations({ sessionId: active.id, repId, items: [s] });
+      if (r.accepted.length) {
+        setMessages((prev) => prev.map((m) => ({
+          ...m,
+          suggestions: m.suggestions?.filter((x) => x.id !== s.id),
+        })));
+        toast('批注已写入', 'ok');
+        refresh();
+      } else {
+        toast(r.rejected[0]?.reason ?? '这条建议没有通过校验', 'err');
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    }
+  }
+
+  async function decide(decision: 'allow' | 'deny') {
+    const active = sessionRef.current;
+    if (!active || !pending) return;
+    try {
+      if (pending.kind === 'proposal' && decision === 'allow' && pending.proposalId) {
+        await endpoints.agentCommitProposal(active.id, pending.proposalId);
+        toast('已提交', 'ok');
+        refresh();
+      } else {
+        await endpoints.agentPermission(active.id, pending.requestId, decision);
+      }
+      setPending(null);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    }
+  }
+
+  function resetSession() {
+    const old = sessionRef.current;
+    sessionRef.current = null;
+    if (old) void endpoints.agentClose(old.id).catch(() => undefined);
+    setSession(null);
+    setMessages([]);
+    setPending(null);
+  }
+
+  async function changeSkill(id: string) {
+    setSkill(id);
+    resetSession();
+  }
+
+  async function changeHarness(id: string) {
+    setHarness(id);
+    resetSession();
+  }
+
+  async function changeApprovals(patch: { annotations?: typeof approvals.annotations; body?: typeof approvals.body }) {
+    setApprovals(patch);
+    const active = sessionRef.current;
+    if (active) {
+      try { await endpoints.agentApprovals(active.id, patch); } catch { /* 下次发送会再带 */ }
+    }
+  }
+
+  /* ---------------- float 拖拽 / 缩放 ---------------- */
+  const dragRef = useRef<{ mode: 'move' | 'resize'; sx: number; sy: number; box: typeof floatBox } | null>(null);
+  const onHeaderPointerDown = (e: React.PointerEvent) => {
+    if (surface !== 'float') return;
+    if ((e.target as HTMLElement).closest('button,select,input,textarea')) return;
+    dragRef.current = { mode: 'move', sx: e.clientX, sy: e.clientY, box: floatBox };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onResizePointerDown = (e: React.PointerEvent) => {
+    if (surface !== 'float') return;
+    e.stopPropagation();
+    dragRef.current = { mode: 'resize', sx: e.clientX, sy: e.clientY, box: floatBox };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    if (d.mode === 'move') {
+      setFloat({
+        x: Math.max(8, Math.min(window.innerWidth - 120, d.box.x + e.clientX - d.sx)),
+        y: Math.max(8, Math.min(window.innerHeight - 80, d.box.y + e.clientY - d.sy)),
+      });
+    } else {
+      setFloat({ w: Math.max(360, d.box.w + e.clientX - d.sx), h: Math.max(420, d.box.h + e.clientY - d.sy) });
+    }
+  };
+  const onPointerUp = () => { dragRef.current = null; };
 
   if (!open) return null;
 
-  const say = (m: Msg) => setMsgs((p) => [...p, m]);
-
-  async function go(text: string): Promise<Msg> {
-    const q = text.trim();
-    if (!q) return { role: 'ai', text: '想问什么？可以直接问，也可以点上面的建议。' };
-
-    // 1. 阅读进度：按「作品读了多少」判断，而不是只看有没有阅读游标记录——
-    //    否则你正站在阅读器里问「哪些没读完」，它却回答「没有正在读的条目」
-    if (/读到|进度|没读完|读完|继续读/.test(q)) {
-      const { works } = await endpoints.works();
-      const un = works.filter((w) => w.readPct < 0.99);
-      if (!un.length) {
-        return {
-          role: 'ai',
-          text: `书架上的 ${works.length} 部作品都读完了。`,
-          actions: [{ label: '打开书架', run: () => navigate('shelf') }],
-        };
-      }
-      const started = un.filter((w) => w.readPct > 0);
-      return {
-        role: 'ai',
-        text: started.length
-          ? `有 ${un.length} 部作品没读完，其中 ${started.length} 部读到一半：`
-          : `有 ${un.length} 部作品还没开始读：`,
-        evidence: un.slice(0, 6).map((w) => ({
-          id: w.work.id,
-          title: w.work.title,
-          type: 'work',
-          snippet: `读到 ${Math.round(w.readPct * 100)}%，共 ${w.parts.length} 章${w.next ? `；下一步：${w.next.text}` : ''}`,
-        })),
-        actions: [
-          {
-            label: started.length ? '继续读最靠前的一部' : '从第一部开始读',
-            run: () => navigate('reader', { work: (started[0] ?? un[0]).work.id }),
-          },
-          { label: '看全部', run: () => navigate('continue') },
-        ],
-      };
-    }
-
-    // 2. 谁动过（对账）
-    if (/谁|最近|动过|未署名|外部/.test(q)) {
-      const j = await endpoints.journal({ limit: '12' });
-      const unsigned = j.events.filter((e) => e.actor === 'external:unknown');
-      const lines = j.events.slice(0, 8).map((e) => `${e.at.slice(5, 16)} ${actorName(e.actor)} · ${opName(e.op)} · ${e.summary}`);
-      return {
-        role: 'ai',
-        text: unsigned.length
-          ? `最近 ${j.events.length} 条动作里有 ${unsigned.length} 条没署名，可能是外部编辑器改的。`
-          : `最近 ${j.events.length} 条动作都有署名。`,
-        evidence: j.events.slice(0, 6).map((e) => ({
-          id: e.id, title: e.summary, type: 'event',
-          snippet: `${e.at.slice(0, 16)} · ${actorName(e.actor)} · ${e.target}`,
-        })),
-        actions: [
-          { label: '去接入页看全部', run: () => navigate('agent') },
-          {
-            label: unsigned.length ? '对账一次' : '刷新事件流',
-            run: async () => {
-              const r = await endpoints.reconcile();
-              toast(r.report.unsigned.length ? `发现 ${r.report.unsigned.length} 处未署名改动` : '没有未署名改动', r.report.unsigned.length ? 'err' : 'ok');
-              navigate('agent');
-            },
-          },
-        ],
-      };
-    }
-
-    // 3. 卡在哪
-    if (/卡|下一步|推进|消化|沉淀|没做/.test(q)) {
-      const f: FlowView = await endpoints.flow();
-      const stuck = f.stuck.slice(0, 6);
-      if (!stuck.length) return { role: 'ai', text: '没有卡住的条目，五道闸门全过了。' };
-      return {
-        role: 'ai',
-        text: `有 ${f.stuck.length} 个条目卡在闸门上：`,
-        evidence: stuck.map((c) => ({
-          id: c.id, title: c.title, type: c.kind,
-          snippet: `卡在「${stageName(c.next?.key)}」：${c.next?.text ?? ''}`,
-        })),
-        actions: [
-          { label: '打开流转看板', run: () => navigate('changes') },
-          { label: '看流转', run: () => navigate('shelf') },
-        ],
-      };
-    }
-
-    // 4. 这一章讲了什么（用上下文）
-    if (/这|讲了什么|摘要|总结|概括/.test(q) && ctx.id && ctx.kind !== 'none') {
-      if (ctx.kind === 'rep') {
-        const r = await endpoints.rep(ctx.id);
-        const body = r.content.replace(/^---[\s\S]*?---\n/, '').replace(/^#.*$/m, '').trim();
-        const sents = body.split(/(?<=[。！？\n])/).map((s) => s.trim()).filter((s) => s.length > 8);
-        return {
-          role: 'ai',
-          text: sents.length
-            ? `这一章的要点（都取自原文，没加我的发挥）：\n${sents.slice(0, 4).map((s, i) => `${i + 1}. ${s}`).join('\n')}`
-            : '正文是空的，或者短到提不出要点。',
-          evidence: [{ id: ctx.id, title: ctx.title, type: 'rep', snippet: body.slice(0, 160) }],
-          actions: [
-            {
-              label: '就这段衍生一篇笔记',
-              run: () => openSheet('derive', { srcId: ctx.id, title: `${ctx.title} · 读后`, body: `\n\n> ${sents.slice(0, 2).join('')}\n` }),
-            },
-            { label: '给这一章做批注', run: () => openSheet('annotate', { repId: ctx.id }) },
-          ],
-        };
-      }
-    }
-
-    // 5. 找内容 → 检索
-    // 整句拿去搜在中文里几乎必然 miss（问句里全是「有哪些」「帮我」这类成分），
-    // 所以先抽关键词，还不行就退到更短的片段再试一次。
-    const key = extractKey(q) || q;
-    let used = key;
-    let s: SearchView = await endpoints.search(key);
-    if (!s.hits.length) {
-      for (const alt of keyFallbacks(key)) {
-        const t: SearchView = await endpoints.search(alt);
-        if (t.hits.length) {
-          s = t;
-          used = alt;
-          break;
-        }
-      }
-    }
-    if (!s.hits.length) {
-      return {
-        role: 'ai',
-        text: `库里没有跟「${key}」相关的内容。我不能凭空编一段给你，换个词或者先去采集一条。`,
-        actions: [
-          { label: `采集「${key}」`, run: () => openSheet('capture', { title: key }) },
-          { label: '全库检索', run: () => navigate('search', { q: key }) },
-        ],
-      };
-    }
-    return {
-      role: 'ai',
-      text: used === key
-        ? `库里有 ${s.hits.length} 处跟「${key}」相关，最靠前的几处：`
-        : `按「${key}」没搜到，缩小到「${used}」找到 ${s.hits.length} 处：`,
-      evidence: s.hits.slice(0, 5).map((h) => ({ id: h.id, title: h.title, type: h.type, snippet: h.snippet })),
-      actions: [
-        { label: '打开检索页看全部', run: () => navigate('search', { q: used }) },
-        {
-          label: '把这几条收进一个专题',
-          run: () => openSheet('capture', { title: `专题：${key}`, body: s.hits.slice(0, 5).map((h) => `- [[${h.title}]]`).join('\n') }),
-        },
-      ],
-    };
-  }
-
-  async function ask(text: string) {
-    setBusy(true);
-    say({ role: 'me', text });
-    setInput('');
-    try {
-      const m = await go(text);
-      say({ ...m, budget });
-      // 助手的每次回答都留痕：外部 Agent 做的事必须能被看见
-      await endpoints.journalLog({ op: 'read', target: 'assistant', summary: `助手：${text.slice(0, 40)}`, payload: { ctx: ctx.id } });
-    } catch (e) {
-      say({ role: 'ai', text: `我没能回答这个问题：${e instanceof Error ? e.message : String(e)}` });
-    } finally {
-      setBusy(false);
-    }
-  }
+  const isFloat = surface === 'float';
 
   return (
-    <aside className="ai-panel" role="complementary" aria-label="AI 助手" data-testid="ai-panel">
-      <div className="ai-ctx">
+    <aside
+      className="ai-panel"
+      data-surface={surface}
+      role="complementary"
+      aria-label="AI 助手"
+      data-testid="ai-panel"
+      style={isFloat ? { left: floatBox.x, top: floatBox.y, width: floatBox.w, height: floatBox.h } : undefined}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      <div className="ai-ctx" onPointerDown={onHeaderPointerDown} data-drag={isFloat ? '1' : '0'}>
         <span className="ai-ctx-title">助手</span>
-        <span className="ai-ctx-item">带入：{ctx.kind === 'none' ? '无' : ctx.title}</span>
-        <span className="ai-ctx-item" data-warn={budget.used >= budget.limit ? '1' : '0'}>提案 {budget.used}/{budget.limit}</span>
+        <span className="ai-ctx-item" title={ctx.title}>带入：{ctx.kind === 'none' ? '无' : ctx.title}</span>
         <span className="spacer" />
+        <button
+          className="btn btn-ghost btn-icon btn-sm"
+          onClick={() => setSurface(isFloat ? 'dock' : 'float')}
+          aria-label={isFloat ? '停靠到侧栏' : '切换为悬浮'}
+          title={isFloat ? '停靠到侧栏' : '切换为悬浮'}
+          data-testid="ai-surface"
+        >
+          <Icon name={isFloat ? 'panel' : 'assistant'} size={15} />
+        </button>
         <button className="btn btn-ghost btn-icon btn-sm" onClick={close} aria-label="收起助手" data-testid="ai-close">
           <Icon name="close" size={15} />
         </button>
       </div>
 
+      <div className="ai-controls">
+        <select
+          className="select select-sm"
+          value={harnessId}
+          onChange={(e) => void changeHarness(e.target.value)}
+          aria-label="选择 harness"
+          data-testid="ai-harness"
+        >
+          {harnesses.filter((h) => h.enabled !== false).map((h) => (
+            <option key={h.id} value={h.id}>{h.label}{h.installed === false ? '（未找到）' : ''}</option>
+          ))}
+        </select>
+        <select
+          className="select select-sm"
+          value={skillId}
+          onChange={(e) => void changeSkill(e.target.value)}
+          aria-label="选择技能"
+          data-testid="ai-skill"
+        >
+          <option value="none">无技能</option>
+          {skills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <button
+          className="btn btn-quiet btn-sm"
+          onClick={() => setShowSettings((v) => !v)}
+          aria-expanded={showSettings}
+          data-testid="ai-settings"
+        >
+          审批：{approvalLabel(approvals)}
+        </button>
+      </div>
+
+      {showSettings && (
+        <div className="ai-settings">
+          <label>批注
+            <select className="select select-sm" value={approvals.annotations} onChange={(e) => void changeApprovals({ annotations: e.target.value as typeof approvals.annotations })}>
+              <option value="ask">每次确认</option>
+              <option value="auto">自动落笔</option>
+              <option value="readonly">只读</option>
+            </select>
+          </label>
+          <label>正文
+            <select className="select select-sm" value={approvals.body} onChange={(e) => void changeApprovals({ body: e.target.value as typeof approvals.body })}>
+              <option value="ask">每次确认</option>
+              <option value="auto">自动提交</option>
+              <option value="readonly">只读</option>
+            </select>
+          </label>
+          {session?.configOptions?.length ? session.configOptions.map((o) => (
+            <label key={o.id}>{o.name}
+              <select
+                className="select select-sm"
+                value={o.currentValue}
+                onChange={(e) => {
+                  void endpoints.agentConfig(session.id, o.id, e.target.value).then((r) => {
+                    setSession((s) => (s ? { ...s, configOptions: r.configOptions as typeof s.configOptions } : s));
+                  });
+                }}
+              >
+                {o.options.map((x) => <option key={x.value} value={x.value}>{x.name}</option>)}
+              </select>
+            </label>
+          )) : null}
+        </div>
+      )}
+
+      <div className="ai-context-line">
+        <span>将发送 ~{estimate.toLocaleString()} 字</span>
+        <span>· {refs.length} 条引用</span>
+        {lastPack?.omitted?.length ? <span className="ai-warn">· {lastPack.omitted.join('；')}</span> : null}
+        <span className="spacer" />
+        <span className="mono">{session ? statusLabel(session.status) : '未开会话'}</span>
+      </div>
+
       <div className="ai-log" ref={logRef}>
-        {msgs.length === 0 && (
+        {messages.length === 0 && (
           <div className="ai-intro">
             <p className="ai-intro-text">
-              我能看到的只有你这个空间里的真实内容，回答都会附上出处。检索不到我会直说，不会编。
+              我看到的只有这个空间里的真实内容。回答会带出处；改正文或批注按你选的审批级别走。
             </p>
             <div className="ai-allow">
-              允许的动作：检索 / 打开 / 衍生笔记 / 采集 / 建任务 / 生成提案。要改正文必须你逐条确认。
+              允许的动作：检索 / 打开 / 引用 / 批注建议 / 提案。{approvals.body === 'auto' ? '自动模式会直接提交，但删除、归档、外发永不自动。' : '改正文要你逐条确认。'}
             </div>
             <div className="ai-starters">
-              {SUGGESTIONS.map((s) => (
-                <button key={s} className="ai-starter" onClick={() => void ask(s)} data-testid="ai-suggest">
+              {starters.map((s) => (
+                <button key={s} className="ai-starter" onClick={() => void send(s)} data-testid="ai-suggest">
                   <span>{s}</span>
                   <Icon name="arrow" size={12} />
                 </button>
@@ -256,47 +471,39 @@ export function AiPanel() {
           </div>
         )}
 
-        {msgs.map((m, i) => (
+        {messages.map((m) => (
           m.role === 'me' ? (
-            <div key={i} className="ai-msg ai-msg-me" data-testid="ai-msg-me">{m.text}</div>
+            <div key={m.id} className="ai-msg ai-msg-me" data-testid="ai-msg-me">{m.text}</div>
           ) : (
-            <article key={i} className="ai-reply" data-testid="ai-msg-ai">
+            <article key={m.id} className="ai-reply" data-testid="ai-msg-ai" data-error={m.error ? '1' : '0'}>
               <div className="ai-reply-head">
                 <span className="ai-reply-mark" aria-hidden="true">✦</span>
-                <span>助手</span>
-                {!!m.evidence?.length && <span className="ai-reply-cite">依据 {m.evidence.length}</span>}
+                <span>{session?.harnessId ?? '助手'}</span>
+                {m.streaming ? <span className="ai-stream-dot" aria-label="生成中" /> : null}
               </div>
-              <div className="ai-reply-body">{m.text}</div>
-
-              {!!m.evidence?.length && (
-                <ol className="ai-cites">
-                  {m.evidence.map((e, j) => (
-                    <li key={e.id}>
-                      <span className="ai-cite-no">{j + 1}</span>
-                      <div className="ai-cite-main">
-                        <a
-                          href="#"
-                          onClick={(ev) => {
-                            ev.preventDefault();
-                            close();
-                            navigate(e.type === 'event' ? 'agent' : e.type === 'note' ? 'editor' : 'reader', { id: e.id, rep: e.id });
-                          }}
-                        >
-                          {e.title}
-                        </a>
-                        <div className="ai-cite-snip ellipsis">{e.snippet}</div>
-                      </div>
-                    </li>
+              {m.text ? <div className="ai-reply-body">{m.text}</div> : null}
+              {!!m.tools?.length && (
+                <div className="ai-tools">
+                  {m.tools.map((t) => (
+                    <span key={t.callId || t.name} className="ai-tool" data-tier={t.tier} data-ok={t.ok === false ? '0' : '1'}>
+                      {t.name}{t.summary ? ` · ${t.summary}` : ''}
+                    </span>
                   ))}
-                </ol>
+                </div>
               )}
-
-              {!!m.actions?.length && (
-                <div className="ai-acts">
-                  {m.actions.map((a, j) => (
-                    <button key={j} className="btn btn-sm" data-testid="ai-action" onClick={() => { void a.run(); }}>
-                      {a.label}
-                    </button>
+              {!!m.suggestions?.length && (
+                <div className="ai-anns">
+                  {m.suggestions.map((s) => (
+                    <div key={s.id} className="ai-ann">
+                      <blockquote>{s.quote}</blockquote>
+                      <p>{s.note}</p>
+                      <div className="ai-ann-acts">
+                        <button className="btn btn-sm btn-primary" onClick={() => void acceptSuggestion(s, s.repId)} data-testid="ai-ann-accept">接受</button>
+                        <button className="btn btn-sm" onClick={() => setMessages((prev) => prev.map((x) => ({
+                          ...x, suggestions: x.suggestions?.filter((y) => y.id !== s.id),
+                        })))}>忽略</button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -304,13 +511,37 @@ export function AiPanel() {
           )
         ))}
 
-        {busy && <div className="ai-thinking"><span className="spin" /> 在库里找…</div>}
+        {busy && <div className="ai-thinking"><span className="spin" /> {statusText || '在库里找…'}</div>}
       </div>
 
+      {pending && (
+        <div className="ai-permission" data-testid="ai-permission">
+          <div className="ai-permission-head">
+            <strong>{pending.kind === 'proposal' ? '这条变更要提交吗？' : '这个工具调用要允许吗？'}</strong>
+            <span className="mono">{pending.action}</span>
+          </div>
+          <pre>{pending.preview || '（没有 diff 预览）'}</pre>
+          <div className="ai-ann-acts">
+            <button className="btn btn-sm btn-primary" onClick={() => void decide('allow')}>允许</button>
+            <button className="btn btn-sm" onClick={() => void decide('deny')}>拒绝</button>
+          </div>
+        </div>
+      )}
+
       <div className="ai-composer">
+        {!!refs.length && (
+          <div className="ai-refs">
+            {refs.map((r) => (
+              <span key={r.id} className="ai-ref" title={r.quote?.quote ?? r.title}>
+                <span className="ellipsis">{r.quote ? `“${r.quote.quote.slice(0, 18)}…”` : r.title}</span>
+                <button onClick={() => removeRef(r.id)} aria-label={`移除引用 ${r.title}`}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
         <textarea
           className="ai-input"
-          placeholder="问点什么…"
+          placeholder={activeSkill ? `用「${activeSkill.name}」接着问…` : '问点什么…'}
           value={input}
           rows={2}
           data-testid="ai-input"
@@ -318,21 +549,23 @@ export function AiPanel() {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              void ask(input);
+              void send(input);
             }
           }}
         />
         <div className="ai-composer-foot">
-          <span className="ai-composer-hint">回车发送 · Shift+回车换行</span>
-          <button
-            className="btn btn-sm btn-primary"
-            disabled={!input.trim() || busy}
-            onClick={() => void ask(input)}
-          >
-            发送
-          </button>
+          <span className="ai-composer-hint">回车发送 · Shift+回车换行 · ⌘J 开合</span>
+          {busy ? (
+            <button className="btn btn-sm" onClick={() => void (session && endpoints.agentCancel(session.id))}>停止</button>
+          ) : (
+            <button className="btn btn-sm btn-primary" disabled={!input.trim()} onClick={() => void send(input)} data-testid="ai-send">
+              发送
+            </button>
+          )}
         </div>
       </div>
+
+      {isFloat && <div className="ai-resize" onPointerDown={onResizePointerDown} aria-hidden="true" />}
     </aside>
   );
 }
@@ -349,23 +582,12 @@ export function AiFab() {
   );
 }
 
-function actorName(a: string): string {
-  if (a === 'human') return '我';
-  if (a === 'system') return '系统';
-  if (a === 'external:unknown') return '未署名';
-  return `AI·${a.replace('agent:', '')}`;
+function approvalLabel(a: { annotations: string; body: string }): string {
+  const one = (x: string) => (x === 'auto' ? '自动' : x === 'readonly' ? '只读' : '确认');
+  if (a.annotations === a.body) return one(a.annotations);
+  return `批注${one(a.annotations)}/正文${one(a.body)}`;
 }
 
-function opName(op: string): string {
-  return ({
-    capture: '采集', ingest: '入库', read: '阅读', annotate: '批注', derive: '衍生', edit: '编辑',
-    propose: '提案', review: '回顾', settle: '沉淀', commit: '提交', build: '构建', import: '导入',
-    revert: '撤销', external_edit: '未署名改动', reconcile: '对账',
-  } as Record<string, string>)[op] ?? op;
+function statusLabel(s: SessionView['status']): string {
+  return ({ starting: '准备中', ready: '就绪', running: '生成中', error: '出错', closed: '已关闭' })[s] ?? s;
 }
-
-function stageName(k?: string): string {
-  return ({ capture: '采集', derive: '衍生', digest: '消化', review: '回顾', settle: '沉淀' } as Record<string, string>)[k ?? ''] ?? '未开始';
-}
-
-export type { AiContext };

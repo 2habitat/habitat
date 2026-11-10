@@ -33,6 +33,8 @@ export default defineConfig({
         // E2E 走无登录模式：不读开发机上的真实账号文件，也不会因为「本机有账号」而卡在登录页
         HABITAT_AUTH: 'off',
         HABITAT_AUTH_FILE: path.join(E2E, '.auth.json'),
+        // E2E 不拉起真模型：mock harness 会走一遍 session MCP，覆盖「工具 → 建议 → 接受」
+        HABITAT_AGENT_MOCK: '1',
       },
       port: PORT_API,
       reuseExistingServer: false,

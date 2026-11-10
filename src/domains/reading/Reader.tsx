@@ -167,6 +167,7 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
   const refresh = useRefresh();
   const openSheet = useUi((s) => s.openSheet);
   const openAi = useUi((s) => s.openAi);
+  const addAiRef = useUi((s) => s.addAiRef);
   const toast = useUi((s) => s.toast);
 
   const readingWidth = useUi((s) => s.readingWidth);
@@ -205,11 +206,20 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
   const lastSent = useRef(0);
   const lastSaved = useRef(0);
   const restoredFor = useRef('');
+  // 选区回调只挂一次，用 ref 拿「此刻是哪一章」，避免闭包里是首帧的空 rep
+  const repRef = useRef(currentRep);
+  repRef.current = currentRep;
 
-  const [sel, setSel] = useState<{ text: string; top: number; left: number; from: number; to: number; prefix: string; suffix: string } | null>(null);
+  // 选区只存「引文 + 定位 + 所属章」：动作都在阅读条里，不再需要屏幕坐标
+  const [sel, setSel] = useState<{ text: string; rep: string; from: number; to: number; prefix: string; suffix: string } | null>(null);
+  // 换章后旧选区自然失效；用比对而不是 effect 清空，避免「刚选完就被切章副作用清掉」的竞态
+  const liveSel = sel && sel.rep === currentRep ? sel : null;
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [activeId, setActiveId] = useState('');
   const [aaOpen, setAaOpen] = useState(false);
+  // 划错的批注：先在原位问一句，确认了才真删（不弹窗打断阅读）
+  const [delId, setDelId] = useState('');
+  const [deleting, setDeleting] = useState('');
   // 手机上目录收进抽屉：横排 chip 占一整行，阅读区就少了一屏的第一段
   const [tocOpen, setTocOpen] = useState(false);
   const [focus, setFocus] = useState(false);
@@ -256,11 +266,18 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
 
   const charCount = useMemo(() => body.replace(/\s+/g, '').length, [body]);
   const minutes = Math.max(1, Math.round(charCount / 400));
-  const chapterOrder = useMemo(() => {
-    if (!work || !currentPart) return 0;
-    const sorted = [...(work.parts ?? [])].sort((a, b) => a.part.order - b.part.order);
-    return sorted.findIndex((p) => p.part.id === currentPart.part.id) + 1;
-  }, [work, currentPart]);
+  // 章节顺序只排一次：章号、下一章都从同一个序列里取，避免两套顺序打架
+  const orderedParts = useMemo(
+    () => [...(work?.parts ?? [])].sort((a, b) => a.part.order - b.part.order),
+    [work],
+  );
+  const partIndex = useMemo(
+    () => (currentPart ? orderedParts.findIndex((p) => p.part.id === currentPart.part.id) : -1),
+    [orderedParts, currentPart],
+  );
+  const chapterOrder = partIndex >= 0 ? partIndex + 1 : 0;
+  const nextPart = partIndex >= 0 ? orderedParts[partIndex + 1] : undefined;
+  const nextRep = nextPart ? (nextPart.reps.find((r) => r.carrier === 'md') ?? nextPart.reps[0]) : undefined;
 
   /* ---- 边注对齐：把每条批注贴到它引文的那一行 ---- */
   const placeNotes = useCallback(() => {
@@ -349,7 +366,9 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
       }
       if (!top && saved?.ratio) top = (el.scrollHeight - el.clientHeight) * saved.ratio;
       if (!top && repData.cursor.current > 0.005) top = (el.scrollHeight - el.clientHeight) * repData.cursor.current;
-      if (top > 0) el.scrollTop = top;
+      // 新章没有存档时必须显式回到顶部：否则会沿用上一章滚到底的 scrollTop，
+      // 点「下一章」进去直接落在文末，等于没翻页
+      el.scrollTop = Math.max(0, top);
     });
   }, [repData?.rep.id, html]);
 
@@ -405,9 +424,15 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
     // 首帧 mainRef 还是 null（数据没回来），必须等 rep 挂载后再绑一次
   }, [currentRep, savePos, repData?.rep.id]);
 
-  /* ---- 选中正文 → 工具条 ---- */
+  /* ---- 选中正文 → 阅读条切到选区模式 ---- */
   useEffect(() => {
-    const onUp = () => {
+    const onUp = (e: Event) => {
+      // e.target 可能是 document（合成事件），所以 closest 也要可选调用
+      const t = e.target as Element | null;
+      // 点阅读条自己的按钮时不能重算选区：mouseup 先于 click，重算会把 sel 清掉，
+      // 点「高亮」就变成了点空。表单控件同理（批注抽屉里打字）。
+      if (t?.closest?.('.reader-bar, .sheet, .overlay, input, textarea, select, [contenteditable="true"]')) return;
+
       const s = window.getSelection();
       const text = s?.toString().trim() ?? '';
       const host = articleRef.current;
@@ -416,7 +441,6 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
         return;
       }
       const range = s.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
 
       let prefix = '';
       let suffix = '';
@@ -436,8 +460,7 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
       const from = host.innerText.indexOf(text);
       setSel({
         text,
-        top: rect.top,
-        left: rect.left + rect.width / 2,
+        rep: repRef.current,
         from: from < 0 ? 0 : from,
         to: from < 0 ? text.length : from + text.length,
         prefix,
@@ -451,6 +474,24 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
       document.removeEventListener('keyup', onUp);
     };
   }, []);
+
+  const clearSel = useCallback(() => {
+    try { window.getSelection()?.removeAllRanges(); } catch { /* 选区跨了 shadow root 之类，清不掉就算了 */ }
+    setSel(null);
+  }, []);
+
+  /* ---- Esc 退出选区模式 ---- */
+  useEffect(() => {
+    if (!sel) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') clearSel(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [sel, clearSel]);
+
+  /* ---- 换章后把旧选区真正扔掉（比对 rep，不会误清刚选的新选区） ---- */
+  useEffect(() => {
+    if (sel && sel.rep !== currentRep) setSel(null);
+  }, [sel, currentRep]);
 
   /* ---- Aa 面板：点外面或 Esc 关掉 ---- */
   useEffect(() => {
@@ -522,6 +563,93 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), 'err');
     }
+  }
+
+  async function removeAnnotation(id: string) {
+    setDeleting(id);
+    try {
+      await endpoints.removeAnnotation(id);
+      setDelId('');
+      toast('已删除批注，高亮同时移除', 'ok');
+      refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    } finally {
+      setDeleting('');
+    }
+  }
+
+  /* ---- 选区动作：都从阅读条发起，不盖正文 ---- */
+  async function highlightSelection() {
+    const s = liveSel;
+    if (!s) return;
+    try {
+      // 必须等写入回来再 refresh：否则重取可能跑在 POST 前面，界面看起来「点了没反应」
+      await endpoints.annotate({
+        repId: currentRep, quote: s.text, color: 'yellow',
+        from: s.from, to: s.to, prefix: s.prefix, suffix: s.suffix,
+      });
+      clearSel();
+      toast('已高亮', 'ok');
+      refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    }
+  }
+
+  function annotateSelection() {
+    const s = liveSel;
+    if (!s) return;
+    openSheet('annotate', {
+      repId: currentRep, quote: s.text, from: s.from, to: s.to, prefix: s.prefix, suffix: s.suffix,
+    }, clearSel);
+  }
+
+  function deriveSelection() {
+    const s = liveSel;
+    if (!s) return;
+    openSheet('derive', { srcId: currentRep, title: '读后一得', body: `\n\n> ${s.text}\n\n` }, clearSel);
+  }
+
+  function copySelection() {
+    const s = liveSel;
+    if (!s) return;
+    void navigator.clipboard.writeText(`> ${s.text}`);
+    toast('引文已复制', 'ok');
+    clearSel();
+  }
+
+  function goNextChapter() {
+    if (!nextRep) return;
+    clearSel();
+    setParam('rep', nextRep.id, { work: workId ?? '' });
+  }
+
+  /** 选中一段 → 加入助手引用。锚点复用批注的 from/to/prefix/suffix，不另造一套。 */
+  function referenceSelection() {
+    const s = liveSel;
+    if (!s) return;
+    addAiRef({
+      id: `ref-${currentRep}-${s.from}-${s.to}`,
+      kind: 'quote',
+      objectId: currentRep,
+      title: chapterTitle,
+      revision: repData?.rep.rev ?? 0,
+      quote: {
+        repId: currentRep,
+        quote: s.text,
+        from: s.from,
+        to: s.to,
+        prefix: s.prefix,
+        suffix: s.suffix,
+        headingId: activeId || undefined,
+        revision: repData?.rep.rev ?? 0,
+      },
+      addedBy: 'user',
+    });
+    openAi({ kind: 'rep', id: currentRep, title: chapterTitle, revision: repData?.rep.rev ?? 0 });
+    toast('已加入助手引用', 'ok');
+    clearSel();
   }
 
   return (
@@ -614,103 +742,131 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
           >
             <Icon name="menu" size={13} /><span>目录</span>
           </button>
-          <span className="reader-chapter ellipsis" title={chapterTitle}>{chapterTitle}</span>
-          <span className="reader-bar-spacer" />
-          {repData && !repData.locked && (
-            <button className="bar-btn" onClick={() => navigate('editor', editParams)} data-testid="reader-edit" title={noteId ? '编辑这篇笔记' : '编辑这一章'}>
-              编辑
-            </button>
-          )}
-          {work && <BuildButton workId={work.work.id} compact showStatus={false} />}
-          {work?.hasData && <button className="bar-btn" onClick={() => navigate('data', { work: work.work.id })} title="编辑数据">数据</button>}
-          <button className="bar-btn" onClick={() => void markReadDone()} data-testid="reader-done" title="标记读完">
-            <Icon name="check" size={13} /><span>读完</span>
-          </button>
-          <button
-            className="bar-btn"
-            onClick={() => openSheet('derive', { srcId: currentRep, title: '读后一得' })}
-            data-testid="reader-derive"
-            title="衍生一篇笔记"
-          >
-            <Icon name="pen" size={13} /><span>衍生</span>
-          </button>
+          {liveSel ? (
+            /* 选区模式：动作就在阅读条里，正文一个字都不盖 */
+            <>
+              <span className="reader-sel-count" data-testid="sel-count">
+                已选 <b className="mono">{liveSel.text.length.toLocaleString('zh-CN')}</b> 字
+              </span>
+              <button
+                className="bar-btn bar-btn-icon"
+                onClick={clearSel}
+                title="取消选择（Esc）"
+                aria-label="取消选择"
+                data-testid="sel-clear"
+              >
+                <Icon name="close" size={12} />
+              </button>
+              <span className="reader-bar-spacer" />
+              <span className="reader-sel-actions" data-testid="selbar" role="toolbar" aria-label="选中的文字">
+                <button className="bar-btn bar-btn-accent" onClick={highlightSelection} data-testid="sel-highlight">高亮</button>
+                <button className="bar-btn" onClick={annotateSelection} data-testid="sel-annotate">批注</button>
+                <button className="bar-btn" onClick={referenceSelection} data-testid="sel-reference">引用</button>
+                <button className="bar-btn" onClick={deriveSelection} data-testid="sel-derive">衍生</button>
+                <button className="bar-btn" onClick={copySelection}>复制引用</button>
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="reader-chapter ellipsis" title={chapterTitle}>{chapterTitle}</span>
+              <span className="reader-bar-spacer" />
+              {repData && !repData.locked && (
+                <button className="bar-btn" onClick={() => navigate('editor', editParams)} data-testid="reader-edit" title={noteId ? '编辑这篇笔记' : '编辑这一章'}>
+                  编辑
+                </button>
+              )}
+              {work && <BuildButton workId={work.work.id} compact showStatus={false} />}
+              {work?.hasData && <button className="bar-btn" onClick={() => navigate('data', { work: work.work.id })} title="编辑数据">数据</button>}
+              <button className="bar-btn" onClick={() => void markReadDone()} data-testid="reader-done" title="标记读完">
+                <Icon name="check" size={13} /><span>读完</span>
+              </button>
+              <button
+                className="bar-btn"
+                onClick={() => openSheet('derive', { srcId: currentRep, title: '读后一得' })}
+                data-testid="reader-derive"
+                title="衍生一篇笔记"
+              >
+                <Icon name="pen" size={13} /><span>衍生</span>
+              </button>
 
-          <div className="reader-aa" ref={aaRef}>
-            <button
-              className="bar-btn"
-              aria-expanded={aaOpen}
-              aria-haspopup="dialog"
-              data-testid="reader-aa"
-              title="阅读设置"
-              onClick={() => setAaOpen((v) => !v)}
-            >Aa</button>
-            {aaOpen && (
-              <div className="aa-panel" role="dialog" aria-label="阅读设置">
-                <div className="aa-row">
-                  <span className="aa-label">字号</span>
-                  <div className="aa-seg">
-                    <button onClick={() => setReaderSize(readerSize - 1)} disabled={readerSize <= 15} aria-label="减小字号">−</button>
-                    <b className="mono">{readerSize}</b>
-                    <button onClick={() => setReaderSize(readerSize + 1)} disabled={readerSize >= 20} aria-label="增大字号">＋</button>
+              <div className="reader-aa" ref={aaRef}>
+                <button
+                  className="bar-btn"
+                  aria-expanded={aaOpen}
+                  aria-haspopup="dialog"
+                  data-testid="reader-aa"
+                  title="阅读设置"
+                  onClick={() => setAaOpen((v) => !v)}
+                >Aa</button>
+                {aaOpen && (
+                  <div className="aa-panel" role="dialog" aria-label="阅读设置">
+                    <div className="aa-row">
+                      <span className="aa-label">字号</span>
+                      <div className="aa-seg">
+                        <button onClick={() => setReaderSize(readerSize - 1)} disabled={readerSize <= 15} aria-label="减小字号">−</button>
+                        <b className="mono">{readerSize}</b>
+                        <button onClick={() => setReaderSize(readerSize + 1)} disabled={readerSize >= 20} aria-label="增大字号">＋</button>
+                      </div>
+                    </div>
+                    <div className="aa-row">
+                      <span className="aa-label">行宽</span>
+                      <div className="aa-seg">
+                        {([['narrow', '窄'], ['normal', '中'], ['wide', '宽'], ['full', '满']] as const).map(([w, label]) => (
+                          <button
+                            key={w}
+                            data-testid={`reading-${w}`}
+                            aria-pressed={readingWidth === w}
+                            onClick={() => setReadingWidth(w)}
+                          >{label}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="aa-row">
+                      <span className="aa-label">字体</span>
+                      <div className="aa-seg">
+                        <button aria-pressed={readerFont === 'sans'} onClick={() => setReaderFont('sans')}>黑</button>
+                        <button aria-pressed={readerFont === 'serif'} onClick={() => setReaderFont('serif')}>宋</button>
+                      </div>
+                    </div>
+                    <div className="aa-row">
+                      <span className="aa-label">缩进</span>
+                      <div className="aa-seg">
+                        <button aria-pressed={!readerIndent} onClick={() => setReaderIndent(false)}>关</button>
+                        <button aria-pressed={readerIndent} onClick={() => setReaderIndent(true)}>开</button>
+                      </div>
+                    </div>
+                    <p className="aa-note">窄/中/宽按「几个字」算，改字号不会把每行字数带跑。「满」铺满整列，批注落到文末。</p>
                   </div>
-                </div>
-                <div className="aa-row">
-                  <span className="aa-label">行宽</span>
-                  <div className="aa-seg">
-                    {([['narrow', '窄'], ['normal', '中'], ['wide', '宽']] as const).map(([w, label]) => (
-                      <button
-                        key={w}
-                        data-testid={`reading-${w}`}
-                        aria-pressed={readingWidth === w}
-                        onClick={() => setReadingWidth(w)}
-                      >{label}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="aa-row">
-                  <span className="aa-label">字体</span>
-                  <div className="aa-seg">
-                    <button aria-pressed={readerFont === 'sans'} onClick={() => setReaderFont('sans')}>黑</button>
-                    <button aria-pressed={readerFont === 'serif'} onClick={() => setReaderFont('serif')}>宋</button>
-                  </div>
-                </div>
-                <div className="aa-row">
-                  <span className="aa-label">缩进</span>
-                  <div className="aa-seg">
-                    <button aria-pressed={!readerIndent} onClick={() => setReaderIndent(false)}>关</button>
-                    <button aria-pressed={readerIndent} onClick={() => setReaderIndent(true)}>开</button>
-                  </div>
-                </div>
-                <p className="aa-note">行宽按「几个字」算，改字号不会把每行字数带跑。</p>
+                )}
               </div>
-            )}
-          </div>
 
-          <button
-            className="bar-btn bar-btn-icon"
-            onClick={() => openAi({ kind: 'rep', id: currentRep, title: chapterTitle })}
-            title="问这一章"
-            data-testid="reader-ask"
-          >
-            <Icon name="assistant" size={14} />
-          </button>
-          <button
-            className="bar-btn bar-btn-accent"
-            onClick={() => openSheet('annotate', { repId: currentRep })}
-            data-testid="reader-annotate"
-          >
-            批注
-            {annList.length > 0 && <span className="bar-count">{annList.length}</span>}
-          </button>
-          <button
-            className="bar-btn bar-btn-icon"
-            aria-pressed={focus}
-            onClick={() => setFocus((v) => !v)}
-            title="专注模式（F）"
-            data-testid="reader-focus"
-          >
-            <Icon name="panel" size={14} />
-          </button>
+              <button
+                className="bar-btn bar-btn-icon"
+                onClick={() => openAi({ kind: 'rep', id: currentRep, title: chapterTitle })}
+                title="问这一章"
+                data-testid="reader-ask"
+              >
+                <Icon name="assistant" size={14} />
+              </button>
+              <button
+                className="bar-btn bar-btn-accent"
+                onClick={() => openSheet('annotate', { repId: currentRep })}
+                data-testid="reader-annotate"
+              >
+                批注
+                {annList.length > 0 && <span className="bar-count">{annList.length}</span>}
+              </button>
+              <button
+                className="bar-btn bar-btn-icon"
+                aria-pressed={focus}
+                onClick={() => setFocus((v) => !v)}
+                title="专注模式（F）"
+                data-testid="reader-focus"
+              >
+                <Icon name="panel" size={14} />
+              </button>
+            </>
+          )}
           <span className="reader-bar-progress" aria-hidden="true"><i ref={barRef} /></span>
         </div>
 
@@ -749,7 +905,11 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
           <div className="reader-flow">
             <header className="reader-opening">
               <p className="reader-kicker">
-                {noteId ? '笔记' : work ? `${work.work.title}${chapterOrder ? ` · 第 ${chapterOrder} 章` : ''}` : '正文'}
+                {noteId
+                  ? '笔记'
+                  : work
+                    ? `${work.work.title}${chapterOrder ? (currentPart?.part.supplemental ? ' · 附录' : ` · 第 ${chapterOrder} 章`) : ''}`
+                    : '正文'}
               </p>
               <h1>{chapterTitle}</h1>
               <p className="reader-meta">{charCount.toLocaleString('zh-CN')} 字 · 约 {minutes} 分钟</p>
@@ -772,21 +932,64 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
                   </button>
                   {a.note && <p className="mnote-text">{a.note}</p>}
                   <div className="mnote-foot">
-                    <span className="mono">
-                      {a.author.startsWith('agent:') ? `AI·${a.author.slice(6)}` : '我'} · {a.createdAt.slice(5, 10)}
-                    </span>
-                    <button
-                      className="link-btn"
-                      onClick={() => openSheet('derive', { srcId: currentRep, title: '由批注衍生', body: `\n\n> ${a.quote}\n\n${a.note ?? ''}\n` })}
-                    >由此衍生</button>
+                    {delId === a.id ? (
+                      <>
+                        <span className="mnote-ask">删除这条批注？</span>
+                        <span className="mnote-acts">
+                          <button
+                            className="link-btn link-btn-danger"
+                            disabled={deleting === a.id}
+                            onClick={() => void removeAnnotation(a.id)}
+                            data-testid="annotation-delete-confirm"
+                          >
+                            {deleting === a.id ? '删除中…' : '删除'}
+                          </button>
+                          <button className="link-btn" onClick={() => setDelId('')}>取消</button>
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="mono">
+                          {a.author.startsWith('agent:') ? `AI·${a.author.slice(6)}` : '我'} · {a.createdAt.slice(5, 10)}
+                        </span>
+                        <span className="mnote-acts">
+                          <button
+                            className="link-btn"
+                            onClick={() => openSheet('derive', { srcId: currentRep, title: '由批注衍生', body: `\n\n> ${a.quote}\n\n${a.note ?? ''}\n` })}
+                          >由此衍生</button>
+                          <button
+                            className="link-btn"
+                            onClick={() => setDelId(a.id)}
+                            data-testid="annotation-delete"
+                            title="删除这条批注，正文里的高亮一并移除"
+                          >删除</button>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
             </aside>
 
             <div className="reader-end">
-              <span className="reader-end-mark">※</span>
-              读到这里。回看不会把最远位置清掉——最远 {furthest}%。
+              <p className="reader-end-note">
+                <span className="reader-end-mark">※</span>
+                读到这里。回看不会把最远位置清掉——最远 {furthest}%。
+              </p>
+              {work && (nextPart && nextRep ? (
+                <button className="reader-next" onClick={goNextChapter} data-testid="reader-next">
+                  <span className="reader-next-text">
+                    <span className="reader-next-kicker">{nextPart.part.supplemental ? '附录' : '下一章'}</span>
+                    <span className="reader-next-title">{nextPart.part.title}</span>
+                  </span>
+                  <Icon name="arrow" size={16} />
+                </button>
+              ) : (
+                <p className="reader-end-last" data-testid="reader-end-last">
+                  整本读完了。
+                  <button className="link-btn" onClick={() => navigate('shelf')}>回到书架</button>
+                </p>
+              ))}
             </div>
 
             {work && (work.derived ?? []).length > 0 && (
@@ -845,37 +1048,6 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
               ) : null}
             </div>
           </div>
-        </div>
-      )}
-
-      {sel && (
-        <div className="selbar" style={{ top: sel.top - 8, left: sel.left }} data-testid="selbar">
-          <button onClick={() => openSheet('annotate', { repId: currentRep, quote: sel.text, from: sel.from, to: sel.to, prefix: sel.prefix, suffix: sel.suffix })} data-testid="sel-annotate">
-            批注
-          </button>
-          <button onClick={() => openSheet('derive', { srcId: currentRep, title: '读后一得', body: `\n\n> ${sel.text}\n\n` })} data-testid="sel-derive">
-            衍生
-          </button>
-          <button
-            onClick={() => {
-              void navigator.clipboard.writeText(`> ${sel.text}`);
-              toast('引文已复制', 'ok');
-              setSel(null);
-            }}
-          >
-            复制引用
-          </button>
-          <button
-            onClick={() => {
-              void endpoints.annotate({ repId: currentRep, quote: sel.text, color: 'yellow', from: sel.from, to: sel.to, prefix: sel.prefix, suffix: sel.suffix });
-              toast('已高亮', 'ok');
-              setSel(null);
-              refresh();
-            }}
-            data-testid="sel-highlight"
-          >
-            高亮
-          </button>
         </div>
       )}
     </div>

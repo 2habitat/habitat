@@ -87,6 +87,7 @@ function usage(): string {
   habitat capture "标题" --body "内容"     采集
   habitat derive  --src <id> --title "…" --body "…"
   habitat annotate --rep <id> --quote "…" [--from 0] [--to 10]
+  habitat annotate --remove <ann-id>      删掉划错的批注
   habitat task "文本" [--due 2026-11-02] [--at 14:00-15:30] [--flow now|next|later] [--project <id>]   新建任务
   habitat event "标题" --date 2026-11-03 --start 14:00 [--end 15:00]  新建日程
   habitat inbox-mail [--fetch]             把发给自己的邮件收进收件箱（--fetch 才真收）
@@ -663,6 +664,12 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'annotate': {
+      const removeId = arg('remove');
+      if (removeId) {
+        const r = await hab.removeAnnotation(removeId, (arg('actor') ?? 'human') as never);
+        console.log(`已删除批注 ${removeId}，事件 ${r.events.length} 条`);
+        return 0;
+      }
       const repId = arg('rep') ?? '';
       const quote = arg('quote') ?? '';
       const r = await hab.annotate({

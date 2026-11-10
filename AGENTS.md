@@ -33,6 +33,26 @@ Node 22（`.node-version`）。`better-sqlite3` 是原生模块，换 Node 大�
 4. **跑完必须留回执**。新增任何定时器/自动化，都要写 `loop-runs.jsonl`；没有回执等于没跑。
 5. **文档不手写**。`docs/automation-manual.md` 由 `shared/loops.ts` 生成，改目录再重新生成。
 
+## Agent 会话层在这一带
+
+```
+shared/agent.ts          事件 / harness 配置 / 上下文 / 技能 / 审批契约
+server/agent/config.ts   agents.yaml 与默认 dsh / WorkBuddy / mock
+server/agent/acp.ts      ACP stdio（dsh）
+server/agent/workbuddy.ts ACP HTTP/SSE 桥（WorkBuddy /api/v1/acp）
+server/agent/remote.ts   远端 ACP 驱动（HTTP JSON + SSE）
+scripts/agent-bridge.mjs 远端 bridge（在远端拉起 dsh，暴露 /acp）
+server/agent/service.ts  会话状态机、上下文打包、审批闸门、session MCP、平台任务执行
+server/agent/context.ts  选区定位与预算裁剪
+server/agent/skills.ts   SKILL.md 加载与编译
+server/routes/agent.ts   /api/agent/*
+src/app/AiPanel.tsx      dock / float / 会话流
+docs/agent-self-contained-loops.md  平台自闭环分析
+```
+
+**硬约束**：harness 不直接碰空间目录；写只走 session MCP → `ChangeService`。
+新增 harness 先实现 `AgentDriver`，不要在 UI 里加分支。
+
 ## 自动化闭环在这一带
 
 ```

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { ROUTES, GROUPS, GROUP_HINT, useLocation, navigate, routeTitle, href } from './router.ts';
 import { useUi, applyUiToDocument } from './ui.ts';
 import { AiPanel, AiFab } from './AiPanel.tsx';
@@ -33,6 +33,10 @@ export function App() {
   const drawer = useUi((s) => s.drawer);
   const setDrawer = useUi((s) => s.setDrawer);
   const openAi = useUi((s) => s.openAi);
+  const aiOpen = useUi((s) => s.aiOpen);
+  const aiSurface = useUi((s) => s.aiSurface);
+  const aiDockWidth = useUi((s) => s.aiDockWidth);
+  const closeAi = useUi((s) => s.closeAi);
   const { data: today } = useToday();
   const { data: inbox } = useInbox();
   const { data: changes } = useChangesSummary();
@@ -44,6 +48,19 @@ export function App() {
 
   // 全站一套键盘：J/K 选行、Enter 打开、Space 预览、X 完成
   useListNav();
+
+  // 助手开关：Cmd/Ctrl+J。输入框里不抢键，避免打断写作。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'j') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      e.preventDefault();
+      if (aiOpen) closeAi(); else openAi();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [aiOpen, closeAi, openAi]);
 
   // 换页就收抽屉，否则手机上点完菜单还要手动关
   useEffect(() => {
@@ -89,7 +106,13 @@ export function App() {
   const group = ROUTES.find((r) => r.id === loc.id)?.group ?? '';
 
   return (
-    <div className="app" data-collapsed={collapsed ? '1' : '0'} data-drawer={drawer ? '1' : '0'}>
+    <div
+      className="app"
+      data-collapsed={collapsed ? '1' : '0'}
+      data-drawer={drawer ? '1' : '0'}
+      data-ai={aiOpen ? aiSurface : 'off'}
+      style={{ '--ai-w': `${aiDockWidth}px` } as CSSProperties}
+    >
       {/* 键盘用户第一下 Tab 就能跳过整条导航 */}
       <a
         className="skip-link"

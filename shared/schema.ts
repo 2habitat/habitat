@@ -82,6 +82,9 @@ export const AnnotationS = mk('annotation', {
   quote: z.string(),
   note: z.string().optional(),
   color: z.string(),
+  origin: z.enum(['human', 'ai']).optional(),
+  skillId: z.string().optional(),
+  sessionId: z.string().optional(),
   derivedIds: z.array(z.string()).optional(),
 });
 

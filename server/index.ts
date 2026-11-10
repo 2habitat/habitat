@@ -322,6 +322,26 @@ export async function start(rootArg?: string) {
     : undefined;
   watcher?.unref?.();
 
+  // 平台 Agent 自动驾驶：定时挑一条「该跑但没跑」的判断类闭环，交给已配置的 harness。
+  // 默认关闭——模型调用有成本；HABITAT_AGENT_LOOP_MS=3600000 显式打开。
+  const agentLoopMs = Number(process.env.HABITAT_AGENT_LOOP_MS ?? 0);
+  let agentLoopBusy = false;
+  const agentLoopTimer = agentLoopMs > 0
+    ? setInterval(() => {
+        if (agentLoopBusy || writes > 0) return;
+        agentLoopBusy = true;
+        void app.habitatAgent.runDueLoops({
+          harnessId: process.env.HABITAT_AGENT_HARNESS || undefined,
+          limit: Number(process.env.HABITAT_AGENT_LOOP_LIMIT ?? 1),
+        }).then((tasks) => {
+          for (const t of tasks) console.log(`[habitat] 平台 Agent 跑闭环：${t.sessionId} → ${t.status}（${t.durationMs}ms）`);
+        }).catch((e) => {
+          console.warn(`[habitat] 平台 Agent 跑闭环失败：${(e as Error).message}`);
+        }).finally(() => { agentLoopBusy = false; });
+      }, Math.max(60_000, agentLoopMs))
+    : undefined;
+  agentLoopTimer?.unref?.();
+
   // 优雅退出：先关 SQLite（WAL checkpoint）再退进程。
   // 否则强杀会留下 habitat.db-wal 与文件锁，下一次重建空间时删不掉。
   let shuttingDown = false;
@@ -337,6 +357,7 @@ export async function start(rootArg?: string) {
       if (tidyTimer) clearInterval(tidyTimer);
       if (alertTimer) clearInterval(alertTimer);
       if (alertBoot) clearTimeout(alertBoot);
+      if (agentLoopTimer) clearInterval(agentLoopTimer);
       app.habitat.close();
       console.log(`[habitat] 已收到 ${sig}，连接已关闭`);
     } catch (e) {

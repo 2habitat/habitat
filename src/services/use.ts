@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { endpoints } from './api.ts';
 
@@ -67,7 +68,8 @@ export function useObject(id: string | null) {
 /** 写完之后统一失效：保证界面看到的就是文件里的内容 */
 export function useRefresh() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries();
+  // 必须是稳定引用：助手/阅读器的 effect 依赖它，每次渲染换函数会把 SSE 连接反复重建
+  return useCallback(() => qc.invalidateQueries(), [qc]);
 }
 
 /** 通知：轮询比 websocket 简单可靠；本机服务，10 秒一次不心疼 */

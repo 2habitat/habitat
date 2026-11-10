@@ -1,10 +1,11 @@
 /** 系统域：数据在哪、谁能写、花了多少、坏没坏 */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, PageHead, StatBand, Chip, Empty, Spinner, PageSkeleton, ErrorBox, Bar, Field, fmtBytes } from '../../components/ui.tsx';
 import { Icon } from '../../components/icons.tsx';
 import { useSystem, useManifest, useJournal, useRefresh } from '../../services/use.ts';
 import { endpoints, type ReconcileView, type JournalEventView } from '../../services/api.ts';
+import type { HarnessView } from '../../../shared/agent.ts';
 import { useUi } from '../../app/ui.ts';
 
 const ACTOR_LABEL: Record<string, string> = {
@@ -25,7 +26,7 @@ function actorClass(a: string): string {
 }
 
 const OP_LABEL: Record<string, string> = {
-  capture: '采集', ingest: '入库', read: '阅读', annotate: '批注', derive: '衍生', edit: '编辑',
+  capture: '采集', ingest: '入库', read: '阅读', annotate: '批注', unannotate: '删批注', derive: '衍生', edit: '编辑',
   propose: '提案', review: '回顾', settle: '沉淀', commit: '提交', build: '构建', import: '导入',
   revert: '撤销', external_edit: '未署名改动', reconcile: '对账',
 };
@@ -137,8 +138,50 @@ export function AgentPage() {
   const refresh = useRefresh();
   const openSheet = useUi((s) => s.openSheet);
   const [busy, setBusy] = useState(false);
+  const [harnesses, setHarnesses] = useState<HarnessView[]>([]);
+  const [probing, setProbing] = useState('');
+  const [agentStat, setAgentStat] = useState<{ active: number; total: number; turns: number; errors: number; avgTurnMs: number } | null>(null);
+  const [pair, setPair] = useState<{ code: string; expiresAt: string } | null>(null);
 
   const events = (data?.events ?? []).filter((e) => (filter ? e.actor.startsWith(filter) : true));
+
+  useEffect(() => {
+    void endpoints.agentHarnesses().then((r) => setHarnesses(r.harnesses)).catch(() => undefined);
+    void endpoints.agentMetrics().then((r) => setAgentStat(r.metrics)).catch(() => undefined);
+  }, []);
+
+  // 配对码有效期内轮询：远端 bridge 一 join，列表里就能看到
+  useEffect(() => {
+    if (!pair) return;
+    const timer = setInterval(() => {
+      void endpoints.agentHarnesses().then((r) => setHarnesses(r.harnesses)).catch(() => undefined);
+      void endpoints.agentMetrics().then((r) => setAgentStat(r.metrics)).catch(() => undefined);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [pair]);
+
+  async function pairRemote() {
+    try {
+      const r = await endpoints.agentPair('远端 harness');
+      setPair({ code: r.code, expiresAt: r.expiresAt });
+      toast(`配对码 ${r.code}（10 分钟内有效）`, 'ok');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    }
+  }
+
+  async function probe(id: string) {
+    setProbing(id);
+    try {
+      const r = await endpoints.agentProbe(id);
+      setHarnesses((prev) => prev.map((h) => (h.id === id ? r.harness : h)));
+      toast(r.harness.probeError ? r.harness.probeError : '握手通过', r.harness.probeError ? 'err' : 'ok');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    } finally {
+      setProbing('');
+    }
+  }
 
   async function runReconcile() {
     setBusy(true);
@@ -169,6 +212,7 @@ export function AgentPage() {
         lede="能力表、事件流、未署名改动，三块缺一不可。外部 Agent 和人在界面上走的是同一套读写路径，不留暗门。"
         actions={
           <>
+            <button className="btn btn-sm btn-quiet" onClick={() => void pairRemote()} data-testid="agent-pair">配对远端</button>
             <button className="btn btn-sm btn-quiet" onClick={() => openSheet('journal')} data-testid="agent-log">补一条事件</button>
             <button className="btn btn-sm btn-primary" onClick={() => void runReconcile()} disabled={busy} data-testid="agent-reconcile">
               {busy ? '对账中…' : '对账'}
@@ -176,6 +220,63 @@ export function AgentPage() {
           </>
         }
       />
+
+      {pair && (
+        <div className="notice" data-tone="warn" data-testid="agent-pair-code">
+          <strong>远端配对码：{pair.code}</strong>
+          <span>
+            在远端机器运行：
+            <code className="mono" style={{ display: 'block', marginTop: 6, whiteSpace: 'pre-wrap' }}>
+              {`node scripts/agent-bridge.mjs --platform ${window.location.origin} --code ${pair.code} --url http://<远端IP>:8799/acp`}
+            </code>
+            平台必须能访问 <code>--url</code>；NAT 后面先做反向隧道。配对成功后列表会自动出现。
+          </span>
+        </div>
+      )}
+
+      {agentStat && (
+        <StatBand
+          items={[
+            { num: agentStat.active, label: '活跃会话', tone: 'accent' },
+            { num: agentStat.turns, label: '累计轮次' },
+            { num: agentStat.errors, label: '失败轮次', tone: agentStat.errors ? 'danger' : undefined },
+            { num: agentStat.avgTurnMs ? `${(agentStat.avgTurnMs / 1000).toFixed(1)}s` : '—', label: '平均一轮' },
+            { num: agentStat.total, label: '会话总数' },
+          ]}
+        />
+      )}
+
+      <section className="section" style={{ marginTop: 'var(--sp-6)' }}>
+        <h2 className="rubric">
+          <span className="rubric-no">00</span>
+          会话 harness
+          <span className="rubric-rule" />
+          <span className="rubric-meta">{harnesses.filter((h) => h.installed !== false).length}/{harnesses.length} 可用</span>
+        </h2>
+        <p className="section-note">
+          配好 <code>agents.yaml</code> 或使用内置的 dsh / WorkBuddy。探测只握手，不调用模型，不会花钱。
+        </p>
+        <div className="caps">
+          {harnesses.map((h) => (
+            <div key={h.id} className="cap" style={{ gridTemplateColumns: '54px 130px minmax(0,1fr) auto' }} data-testid="agent-harness">
+              <span className="cap-flag" data-write={h.installed === false ? '0' : '1'}>{h.installed === false ? '未找到' : '可用'}</span>
+              <span className="cap-name">{h.label}</span>
+              <span className="cap-agent mono ellipsis" title={h.command ?? h.endpoint ?? ''}>
+                {h.driver} · {h.caps ? `ACP ${h.caps.protocolVersion ?? '?'} · MCP ${h.caps.mcp.http ? 'http' : '—'}` : (h.command ?? h.endpoint ?? '')}
+              </span>
+              <button
+                className="btn btn-sm btn-quiet"
+                disabled={probing === h.id}
+                onClick={() => void probe(h.id)}
+                data-testid={`agent-probe-${h.id}`}
+              >
+                {probing === h.id ? '握手…' : '探测'}
+              </button>
+            </div>
+          ))}
+          {!harnesses.length && <Empty title="还没有 harness" desc="在 agents.yaml 里加一条，或把内置 dsh / WorkBuddy 装好。" />}
+        </div>
+      </section>
 
       <section className="section" style={{ marginTop: 'var(--sp-6)' }}>
         <h2 className="rubric">

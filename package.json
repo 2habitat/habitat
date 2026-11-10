@@ -23,6 +23,7 @@
     "test:all": "npm run test:unit && npm run test:e2e",
     "reindex": "tsx server/cli.ts reindex",
     "agent": "tsx server/cli.ts agent",
+    "agent:bridge": "node scripts/agent-bridge.mjs",
     "seed": "tsx scripts/seed-dev.ts",
     "seed:e2e": "tsx scripts/seed-e2e.ts",
     "start": "tsx server/index.ts",

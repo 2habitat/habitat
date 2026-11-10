@@ -623,6 +623,9 @@ export class Habitat {
     prefix?: string;
     suffix?: string;
     actor?: Author;
+    origin?: 'human' | 'ai';
+    skillId?: string;
+    sessionId?: string;
   }): Promise<{ id: Id; events: JournalEvent[] }> {
     const rep = this.store.get<Rep>(input.repId);
     if (!rep) throw new Error(`载体不存在：${input.repId}`);
@@ -648,8 +651,22 @@ export class Habitat {
       quote: input.quote,
       note: input.note,
       color: input.color ?? 'yellow',
+      origin: input.origin ?? 'human',
+      skillId: input.skillId,
+      sessionId: input.sessionId,
     };
     return this.commitOps([{ t: 'create', obj: a as AnyObject }], input.actor ?? 'human', `批注：${input.quote.slice(0, 20)}`);
+  }
+
+  /**
+   * 删掉一条批注（通常是不小心划错的高亮）。
+   * 走同一条 propose → validate → commit 路径：事件流留一条 unannotate，
+   * 反向操作带着完整对象，变更页仍可撤销。
+   */
+  async removeAnnotation(id: Id, actor: Author = 'human'): Promise<{ id: Id; events: JournalEvent[] }> {
+    const a = this.store.get<Annotation>(id);
+    if (!a || a.type !== 'annotation') throw new Error(`批注不存在：${id}`);
+    return this.commitOps([{ t: 'remove', id }], actor, `删除批注：${(a.quote ?? '').slice(0, 20)}`);
   }
 
   async addAction(input: {

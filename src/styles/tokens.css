@@ -73,6 +73,8 @@
 :root[data-reading='narrow'] { --reading-w: calc(var(--reader-size) * 30); }
 :root[data-reading='normal'] { --reading-w: calc(var(--reader-size) * 34); }
 :root[data-reading='wide'] { --reading-w: calc(var(--reader-size) * 40); }
+/* 满：文档带多列表格、并排代码时铺到可用宽度；1180px 封顶，超宽屏不至于一行跑太远 */
+:root[data-reading='full'] { --reading-w: min(1180px, 100%); }
 
 /* 阅读字体：默认黑体做正文，宋体做结构；留给用户自己换 */
 :root[data-reader-font='serif'] { --reader-body-font: var(--font-display); }

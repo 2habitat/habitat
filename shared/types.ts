@@ -93,6 +93,11 @@ export interface Annotation extends BaseObject {
   quote: string;
   note?: string;
   color: string;
+  /** 来源：人手划的，还是 AI 建议后接受的 */
+  origin?: 'human' | 'ai';
+  /** AI 批注来自哪个技能 / 会话；用于筛选与审计 */
+  skillId?: string;
+  sessionId?: string;
   /** 由批注衍生的笔记（血缘向下） */
   derivedIds?: Id[];
 }
@@ -174,7 +179,13 @@ export type Op =
   | { t: 'setBody'; id: Id; body: string }
   | { t: 'append'; id: Id; text: string; anchor?: 'end' | 'start' }
   | { t: 'move'; id: Id; to: string }
-  | { t: 'archive'; id: Id; archived: boolean };
+  | { t: 'archive'; id: Id; archived: boolean }
+  /**
+   * 从行式文件（批注 .jsonl）里摘掉一行。
+   * 批注是「划错了」的即时记录，没有归档态可留；删掉才是用户要的结果。
+   * 反向操作带着整行对象，撤销时原样写回。
+   */
+  | { t: 'remove'; id: Id };
 
 export interface Change {
   op: Op;
@@ -306,6 +317,7 @@ export type JournalOp =
   | 'ingest'
   | 'read'
   | 'annotate'
+  | 'unannotate'
   | 'derive'
   | 'edit'
   | 'propose'

@@ -1,3 +1,7 @@
+import type {
+  AgentSkill, AnnotationSuggestion, ApprovalPolicy, ContextRef, HarnessView, SessionView,
+} from '../../shared/agent.ts';
+
 /** 调本地服务。冲突与校验失败要带结构化信息回给界面，不能只剩一句 message。 */
 export class ApiError extends Error {
   constructor(
@@ -96,6 +100,7 @@ export const api = {
   get: <T>(p: string) => request<T>('GET', p),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
   patch: <T>(p: string, b?: unknown) => request<T>('PATCH', p, b),
+  del: <T>(p: string) => request<T>('DELETE', p),
   /** 裸 body 上传：文件不走 JSON，别把它 base64 化 */
   put: async <T>(p: string, body: BodyInit, type = 'application/octet-stream'): Promise<T> => {
     const res = await fetch(p, { method: 'PUT', headers: { 'content-type': type }, body });
@@ -227,6 +232,7 @@ export const endpoints = {
   capture: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/capture', b),
   derive: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/derive', b),
   annotate: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/annotate', b),
+  removeAnnotation: (id: string) => api.del<{ ok: boolean; id: string }>(`/api/annotations/${encodeURIComponent(id)}`),
   addAction: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/actions', b),
   addEvent: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/events', b),
   cursor: (repId: string, pct: number) => api.post<{ ok: boolean; cursor: { current: number; furthest: number } }>('/api/cursor', { repId, pct }),
@@ -306,6 +312,43 @@ export const endpoints = {
   readNotifications: (id?: string) => api.post<{ ok: boolean; marked: number }>('/api/notifications/read', { id }),
   createRule: (b: unknown) => api.post<{ ok: boolean; rule: RuleView }>('/api/rules', b),
   toggleRule: (id: string) => api.post<{ ok: boolean }>(`/api/rules/${id}/toggle`),
+
+  /* ---------------- Agent 会话 ---------------- */
+  agentHarnesses: () => api.get<{
+    ok: boolean; source: 'file' | 'default'; path?: string; default: string; harnesses: HarnessView[];
+  }>('/api/agent/harnesses'),
+  agentProbe: (id: string) => api.post<{ ok: boolean; harness: HarnessView }>(`/api/agent/harnesses/${encodeURIComponent(id)}/probe`),
+  agentPair: (label?: string) => api.post<{ ok: boolean; code: string; expiresAt: string }>('/api/agent/pair', { label }),
+  agentSkills: () => api.get<{ ok: boolean; skills: AgentSkill[] }>('/api/agent/skills'),
+  agentCreate: (b: {
+    harnessId?: string; focus: { kind: string; id: string; title: string; revision: number };
+    refs?: ContextRef[]; skillId?: string; approvals?: Partial<ApprovalPolicy>;
+  }) => api.post<{ ok: boolean; session: SessionView }>('/api/agent/sessions', b),
+  agentSession: (id: string) => api.get<{ ok: boolean; session: SessionView; context: unknown; lastPack: unknown }>(`/api/agent/sessions/${encodeURIComponent(id)}`),
+  agentTurn: (id: string, text: string, refs?: ContextRef[]) =>
+    api.post<{ ok: boolean; turnId: string }>(`/api/agent/sessions/${encodeURIComponent(id)}/turns`, { text, refs }),
+  agentCancel: (id: string) => api.post<{ ok: boolean }>(`/api/agent/sessions/${encodeURIComponent(id)}/cancel`),
+  agentConfig: (id: string, optionId: string, value: string) =>
+    api.post<{ ok: boolean; configOptions: unknown[] }>(`/api/agent/sessions/${encodeURIComponent(id)}/config`, { optionId, value }),
+  agentApprovals: (id: string, b: Partial<ApprovalPolicy>) =>
+    api.patch<{ ok: boolean; approvals: ApprovalPolicy }>(`/api/agent/sessions/${encodeURIComponent(id)}/approvals`, b),
+  agentPermission: (id: string, requestId: string, decision: 'allow' | 'deny') =>
+    api.post<{ ok: boolean }>(`/api/agent/sessions/${encodeURIComponent(id)}/permission`, { requestId, decision }),
+  agentAcceptAnnotations: (b: { sessionId: string; repId: string; items: AnnotationSuggestion[] }) =>
+    api.post<{ ok: boolean; accepted: AnnotationSuggestion[]; rejected: { quote: string; reason: string }[] }>('/api/agent/annotations/accept', b),
+  agentCommitProposal: (sessionId: string, proposalId: string) =>
+    api.post<{ ok: boolean }>(`/api/agent/proposals/${encodeURIComponent(proposalId)}/commit`, { sessionId }),
+  agentClose: (id: string) => api.del<{ ok: boolean }>(`/api/agent/sessions/${encodeURIComponent(id)}`),
+  agentMetrics: () => api.get<{
+    ok: boolean;
+    metrics: { total: number; active: number; turns: number; errors: number; avgTurnMs: number; byHarness: Record<string, { sessions: number; turns: number; errors: number }> };
+  }>('/api/agent/metrics'),
+  agentRunLoop: (id: string, b?: { harnessId?: string; timeoutMs?: number }) =>
+    api.post<{ ok: boolean; task: { status: string; text: string; errors: string[]; proposals: string[]; durationMs: number } }>(
+      `/api/agent/tasks/loop/${encodeURIComponent(id)}`, b ?? {},
+    ),
+  agentAutopilot: (b?: { harnessId?: string; limit?: number }) =>
+    api.post<{ ok: boolean; tasks: unknown[] }>('/api/agent/autopilot/run', b ?? {}),
 };
 
 /* ---------------- 视图类型 ---------------- */
@@ -365,6 +408,7 @@ export interface AnnotationView {
   id: string; targetRepId: string; quote: string; note?: string; color: string;
   locator: { from: number; to: number; prefix?: string; suffix?: string };
   author: string; createdAt: string;
+  origin?: 'human' | 'ai'; skillId?: string; sessionId?: string;
 }
 export interface TodayView {
   actions: (ActionView & {})[];

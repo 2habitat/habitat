@@ -479,6 +479,8 @@ export class ChangeService {
     }
     const rel = this.store.file(op.id);
     if (!rel) throw new Error(`对象没有文件：${op.id}`);
+    // remove 是行式记录的专用操作（目前只有批注 .jsonl）；别让它落到 md/yaml 上变成空操作
+    if (op.t === 'remove' && !rel.endsWith('.jsonl')) throw new Error(`remove 只能用于行式记录：${rel}`);
     return rel;
   }
 
@@ -595,6 +597,7 @@ export class ChangeService {
       if (i < 0) return;
       const cur = d.lines![i] as unknown as Record<string, unknown>;
       if (op.t === 'update') d.lines![i] = { ...cur, ...op.patch } as unknown as AnyObject;
+      if (op.t === 'remove') d.lines!.splice(i, 1);
       return;
     }
 
@@ -648,6 +651,9 @@ export class ChangeService {
   private async inverseOf(op: Op, before: Draft): Promise<Op[]> {
     if (op.t === 'create') {
       const id = String((op.obj as AnyObject).id);
+      // 批注没有归档态：撤销「新建批注」就是从 jsonl 里摘掉这一行，
+      // 否则 jsonl 里那行还在，重扫一遍高亮又长回来了。
+      if ((op.obj as AnyObject).type === 'annotation') return [{ t: 'remove', id }];
       return [{ t: 'archive', id, archived: true }];
     }
     if (op.t === 'update') {
@@ -668,6 +674,10 @@ export class ChangeService {
     if (op.t === 'move') {
       const cur = this.currentOf(op.id, before);
       return [{ t: 'move', id: op.id, to: String(cur?.path ?? '') }];
+    }
+    if (op.t === 'remove') {
+      const cur = this.currentOf(op.id, before);
+      return cur ? [{ t: 'create', obj: cur as unknown as AnyObject }] : [];
     }
     return [];
   }
@@ -778,6 +788,7 @@ function opToJournal(op: Op, o?: AnyObject): JournalOp {
     }
   }
   if (op.t === 'archive' && op.archived) return 'settle';
+  if (op.t === 'remove') return o?.type === 'annotation' ? 'unannotate' : 'edit';
   if (op.t === 'update') {
     const p = op.patch as Record<string, unknown>;
     if (p.status === 'evergreen') return 'settle';
@@ -802,6 +813,10 @@ function opSummary(op: Op, o?: AnyObject): string {
       return op.archived ? `归档：${name}` : `取消归档：${name}`;
     case 'move':
       return `移动：${name} → ${op.to}`;
+    case 'remove': {
+      const quote = (o as { quote?: string } | undefined)?.quote;
+      return `删除${typeLabel(o?.type)}：${quote ? quote.slice(0, 20) : name}`;
+    }
     default:
       return `改动：${name}`;
   }

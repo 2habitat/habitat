@@ -35,6 +35,8 @@ import {
   claimTarget, releaseClaims, listClaims, listLeases, runLoopAlerts,
 } from '../core/loops.ts';
 import { LOOPS, loopById, renderManual, renderSpaceGuide, type HarnessProfile } from '../../shared/loops.ts';
+import { AgentService } from '../agent/service.ts';
+import { registerAgentRoutes } from './agent.ts';
 
 export interface ApiOpts {
   root: string;
@@ -44,6 +46,8 @@ declare module 'fastify' {
   interface FastifyInstance {
     /** 当前空间。退出时要靠它把 SQLite 正常关掉，不能让 WAL 留在盘上 */
     habitat: Habitat;
+    /** Agent 会话/任务执行器。定时自动化用它跑判断类闭环，不依赖外部 harness 平台 */
+    habitatAgent: AgentService;
   }
 }
 
@@ -89,6 +93,19 @@ export const api = fp<ApiOpts>(async (app: FastifyInstance, opts: ApiOpts) => {
   const rescan = async (ids?: string[]) => {
     await hab.rescan(ids);
   };
+
+  // Agent 会话层：harness 进程由它管，写入口仍然是 hab.changes / hab.annotate。
+  const agent = new AgentService(hab, {
+    root: opts.root,
+    baseUrl: () => {
+      const addr = app.server.address();
+      const port = addr && typeof addr === 'object' ? addr.port : Number(process.env.HABITAT_PORT ?? 8787);
+      return `http://127.0.0.1:${port}`;
+    },
+  });
+  app.decorate('habitatAgent', agent);
+  registerAgentRoutes(app, { hab, agent });
+  app.addHook('onClose', async () => { await agent.closeAll(); });
 
   /* ---------------- 读 ---------------- */
 
@@ -692,6 +709,17 @@ function asBuffer(body: unknown): Buffer | null {
     return wrap(async () => {
       const r = await hab.annotate({ ...b, actor: actorOf(b, req.headers) });
       await rescan([r.id]);
+      return { ok: true, ...r };
+    }, reply);
+  });
+
+  /** 删掉划错的一条批注。事件流留 unannotate，变更页可撤销 */
+  app.delete('/api/annotations/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const a = hab.store.get(id);
+    if (!a || a.type !== 'annotation') return reply.code(404).send({ error: `批注不存在：${id}` });
+    return wrap(async () => {
+      const r = await hab.removeAnnotation(id, actorOf({}, req.headers));
       return { ok: true, ...r };
     }, reply);
   });
@@ -1550,6 +1578,16 @@ export function buildManifest(hab: Habitat): {
         writes: 'knowledge/annotations/<repId>.jsonl',
         event: 'annotate',
         command: 'habitat annotate --rep <id> --quote "…"',
+        mutating: true,
+      },
+      {
+        id: 'unannotate',
+        name: '删批注',
+        human: '阅读器边注「删除」',
+        agent: 'DELETE /api/annotations/:id',
+        writes: 'knowledge/annotations/<repId>.jsonl（摘掉一行）',
+        event: 'unannotate',
+        command: 'habitat annotate --remove <ann-id>',
         mutating: true,
       },
       {

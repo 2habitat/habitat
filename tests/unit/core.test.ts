@@ -9,7 +9,7 @@ import { makeSpace, rmSpace, MINI, W1, D_TODAY, D_EVENT, MONTH_EVENT, day } from
 import { parseDoc } from '../../shared/frontmatter.ts';
 import { gatesOf, stageOf } from '../../shared/lifecycle.ts';
 import { tokenize, buildQuery } from '../../server/core/index.ts';
-import type { Note, Part, Rep, Action } from '../../shared/types.ts';
+import type { Note, Part, Rep, Action, Annotation } from '../../shared/types.ts';
 
 let dir: string;
 let hab: Habitat;
@@ -406,6 +406,52 @@ describe('撤销', () => {
     expect(r.ok).toBe(true);
     await hab.rescan();
     expect(hab.store.get(c.id)?.archivedAt).toBeTruthy();
+  });
+});
+
+/* ---------------- E2. 批注可删（划错了要能撤回） ---------------- */
+
+describe('批注可删', () => {
+  it('删除后 jsonl 里那一行没了，事件是 unannotate，重扫不再出现', async () => {
+    const rep = hab.store.all<Rep>('rep').find((r) => r.carrier === 'md')!;
+    const ann = await hab.annotate({ repId: rep.id, quote: '固定容量状态', from: 10, to: 20 });
+    await hab.rescan();
+    const rel = hab.store.file(ann.id)!;
+    expect(read(rel)).toContain(ann.id);
+
+    const r = await hab.removeAnnotation(ann.id);
+    await hab.rescan();
+    expect(r.events.some((e) => e.op === 'unannotate')).toBe(true);
+    expect(read(rel)).not.toContain(ann.id);
+    expect(hab.store.get(ann.id)).toBeUndefined();
+    expect(hab.annotationsOf(rep.id).map((a) => a.id)).not.toContain(ann.id);
+  });
+
+  it('撤销删除：整行原样写回', async () => {
+    const rep = hab.store.all<Rep>('rep').find((r) => r.carrier === 'md')!;
+    const ann = await hab.annotate({ repId: rep.id, quote: '固定容量状态', from: 10, to: 20, note: '错的' });
+    await hab.removeAnnotation(ann.id);
+    await hab.rescan();
+    expect(hab.store.get(ann.id)).toBeUndefined();
+
+    const cs = (await hab.changes.list()).find((x) => (x.reason ?? '').startsWith('删除批注'))!;
+    const r = await hab.changes.revert(cs.id);
+    expect(r.ok).toBe(true);
+    await hab.rescan();
+    const back = hab.store.get<Annotation>(ann.id);
+    expect(back).toBeTruthy();
+    expect(back?.note).toBe('错的');
+  });
+
+  it('撤销「新建批注」也会摘掉那一行，高亮不会自己长回来', async () => {
+    const rep = hab.store.all<Rep>('rep').find((r) => r.carrier === 'md')!;
+    const ann = await hab.annotate({ repId: rep.id, quote: '固定容量状态', from: 10, to: 20 });
+    await hab.rescan();
+    const cs = (await hab.changes.list()).find((x) => (x.reason ?? '').startsWith('批注：'))!;
+    const r = await hab.changes.revert(cs.id);
+    expect(r.ok).toBe(true);
+    await hab.rescan();
+    expect(hab.store.get(ann.id)).toBeUndefined();
   });
 });
 

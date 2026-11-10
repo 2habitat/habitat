@@ -310,6 +310,7 @@ function opLabel(o: { t: string; id?: string; patch?: Record<string, unknown>; b
     case 'setBody': return `改写正文 ${o.id?.slice(0, 10)}`;
     case 'append': return `追加 ${o.id?.slice(0, 10)}`;
     case 'archive': return o.archived ? '归档' : '取消归档';
+    case 'remove': return '删批注';
     case 'move': return '移动';
     default: return o.t;
   }

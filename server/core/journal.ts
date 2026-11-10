@@ -141,6 +141,7 @@ export const OP_LABEL: Record<JournalOp, string> = {
   ingest: '入库',
   read: '阅读',
   annotate: '批注',
+  unannotate: '删批注',
   derive: '衍生',
   edit: '编辑',
   propose: '提案',

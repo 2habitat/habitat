@@ -1,6 +1,7 @@
 /** 只放 UI 状态，不镜像服务端数据 */
 import { create } from 'zustand';
 import { openPeek as navOpenPeek, closePeek as navClosePeek } from './router.ts';
+import type { ApprovalPolicy, ContextRef } from '../../shared/agent.ts';
 
 export type Theme = 'ningzhi' | 'piaoqing' | 'xuanmo';
 export type ReaderFont = 'serif' | 'sans';
@@ -13,7 +14,11 @@ export interface AiContext {
   id: string;
   title: string;
   quote?: string;
+  revision?: number;
 }
+
+export type AiSurface = 'dock' | 'float';
+export interface AiFloatBox { x: number; y: number; w: number; h: number }
 
 export interface Toast {
   id: number;
@@ -28,8 +33,8 @@ interface UiState {
   collapsed: boolean;
   /** 移动端抽屉是否打开；桌面端不用它 */
   drawer: boolean;
-  /** 阅读行宽，方案要求「可调」 */
-  readingWidth: 'narrow' | 'normal' | 'wide';
+  /** 阅读行宽，方案要求「可调」；full = 铺满可用宽度（宽表格/多列文档） */
+  readingWidth: 'narrow' | 'normal' | 'wide' | 'full';
   /** 正文字号（px），Aa 面板可调；行宽会跟着字号一起缩放 */
   readerSize: number;
   /** 正文字体：黑体（默认）/ 宋体 */
@@ -40,6 +45,13 @@ interface UiState {
   shelfView: 'grid' | 'list';
   aiOpen: boolean;
   aiCtx: AiContext;
+  aiSurface: AiSurface;
+  aiDockWidth: number;
+  aiFloat: AiFloatBox;
+  aiHarnessId: string;
+  aiSkillId: string;
+  aiRefs: ContextRef[];
+  aiApprovals: ApprovalPolicy;
   paletteOpen: boolean;
   sheet: { kind: SheetKind; props: Record<string, unknown>; onDone?: () => void } | null;
   toasts: Toast[];
@@ -49,7 +61,7 @@ interface UiState {
   setRadius: (t: 'sharp' | 'soft' | 'round') => void;
   toggleCollapsed: () => void;
   setDrawer: (v: boolean) => void;
-  setReadingWidth: (w: 'narrow' | 'normal' | 'wide') => void;
+  setReadingWidth: (w: 'narrow' | 'normal' | 'wide' | 'full') => void;
   setReaderSize: (n: number) => void;
   setReaderFont: (f: ReaderFont) => void;
   setReaderIndent: (v: boolean) => void;
@@ -57,6 +69,15 @@ interface UiState {
   openAi: (ctx?: Partial<AiContext>) => void;
   closeAi: () => void;
   setAiCtx: (ctx: Partial<AiContext>) => void;
+  setAiSurface: (s: AiSurface) => void;
+  setAiDockWidth: (n: number) => void;
+  setAiFloat: (b: Partial<AiFloatBox>) => void;
+  setAiHarness: (id: string) => void;
+  setAiSkill: (id: string) => void;
+  addAiRef: (ref: ContextRef) => void;
+  removeAiRef: (id: string) => void;
+  clearAiRefs: () => void;
+  setAiApprovals: (p: Partial<ApprovalPolicy>) => void;
   setPalette: (v: boolean) => void;
   openSheet: (kind: Exclude<SheetKind, null>, props?: Record<string, unknown>, onDone?: () => void) => void;
   closeSheet: () => void;
@@ -76,12 +97,14 @@ const saved = (() => {
 
 function persist(s: Pick<UiState,
   'theme' | 'fontSize' | 'radius' | 'collapsed' | 'readingWidth' | 'readerSize' | 'readerFont' | 'readerIndent' | 'shelfView'
+  | 'aiSurface' | 'aiDockWidth' | 'aiFloat'
 >): void {
   try {
     localStorage.setItem('habitat.ui', JSON.stringify({
       theme: s.theme, fontSize: s.fontSize, radius: s.radius, collapsed: s.collapsed,
       readingWidth: s.readingWidth, readerSize: s.readerSize, readerFont: s.readerFont,
       readerIndent: s.readerIndent, shelfView: s.shelfView,
+      aiSurface: s.aiSurface, aiDockWidth: s.aiDockWidth, aiFloat: s.aiFloat,
     }));
   } catch {
     /* 隐私模式下写不了就算了 */
@@ -103,6 +126,19 @@ export const useUi = create<UiState>((set, get) => ({
   collapsed: saved.collapsed ?? false,
   aiOpen: false,
   aiCtx: { kind: 'none', id: '', title: '全局' },
+  aiSurface: saved.aiSurface === 'float' ? 'float' : 'dock',
+  aiDockWidth: typeof saved.aiDockWidth === 'number' ? Math.min(520, Math.max(320, saved.aiDockWidth)) : 380,
+  aiFloat: saved.aiFloat && typeof saved.aiFloat === 'object'
+    ? {
+        x: Number(saved.aiFloat.x) || 24, y: Number(saved.aiFloat.y) || 80,
+        w: Math.min(720, Math.max(360, Number(saved.aiFloat.w) || 440)),
+        h: Math.min(900, Math.max(420, Number(saved.aiFloat.h) || 640)),
+      }
+    : { x: 24, y: 80, w: 440, h: 640 },
+  aiHarnessId: '',
+  aiSkillId: 'none',
+  aiRefs: [],
+  aiApprovals: { annotations: 'ask', body: 'ask' },
   paletteOpen: false,
   sheet: null,
   toasts: [],
@@ -121,6 +157,25 @@ export const useUi = create<UiState>((set, get) => ({
   openAi: (ctx) => set({ aiOpen: true, aiCtx: { ...get().aiCtx, ...ctx } as AiContext }),
   closeAi: () => set({ aiOpen: false }),
   setAiCtx: (ctx) => set({ aiCtx: { ...get().aiCtx, ...ctx } as AiContext }),
+  setAiSurface: (aiSurface) => { set({ aiSurface }); persist(get()); },
+  setAiDockWidth: (n) => {
+    set({ aiDockWidth: Math.min(520, Math.max(320, n)) });
+    persist(get());
+  },
+  setAiFloat: (b) => {
+    const cur = get().aiFloat;
+    set({ aiFloat: { ...cur, ...b } });
+    persist(get());
+  },
+  setAiHarness: (aiHarnessId) => set({ aiHarnessId }),
+  setAiSkill: (aiSkillId) => set({ aiSkillId }),
+  addAiRef: (ref) => {
+    const cur = get().aiRefs.filter((r) => r.id !== ref.id);
+    set({ aiRefs: [...cur, ref].slice(-5) });
+  },
+  removeAiRef: (id) => set({ aiRefs: get().aiRefs.filter((r) => r.id !== id) }),
+  clearAiRefs: () => set({ aiRefs: [] }),
+  setAiApprovals: (p) => set({ aiApprovals: { ...get().aiApprovals, ...p } }),
   setPalette: (paletteOpen) => set({ paletteOpen }),
 
   openSheet: (kind, props = {}, onDone) => set({ sheet: { kind, props, onDone }, paletteOpen: false }),

@@ -108,6 +108,16 @@ test('阅读：选中正文 → 工具条 → 批注 → 边注出现', async ({
   });
   await expect(page.locator('[data-testid="selbar"]')).toBeVisible();
 
+  // 选区动作在阅读条里，不能压住选中的正文（用户常只是选中来看着读）
+  const barCoversText = await page.evaluate(() => {
+    const bar = document.querySelector('[data-testid="selbar"]')?.getBoundingClientRect();
+    const range = window.getSelection()?.getRangeAt(0);
+    const box = range?.getBoundingClientRect();
+    if (!bar || !box) return true;
+    return !(bar.bottom <= box.top || bar.top >= box.bottom || bar.right <= box.left || bar.left >= box.right);
+  });
+  expect(barCoversText).toBe(false);
+
   await page.click('[data-testid="sel-annotate"]');
   await expect(page.locator('.sheet')).toBeVisible();
   await page.fill('[data-testid="annotate-note"]', 'E2E 写的批注');
@@ -123,6 +133,44 @@ test('阅读：选中正文 → 工具条 → 批注 → 边注出现', async ({
   const marks = page.locator('[data-testid="reader-body"] mark.ann-mark');
   expect(await marks.count()).toBeGreaterThanOrEqual(2);
   await expect(page.locator('[data-testid="reader-body"] mark.ann-mark p')).toHaveCount(0);
+});
+
+test('阅读：划错的高亮能删掉，正文与边注一起消失', async ({ page }) => {
+  await goto(page, 'shelf');
+  await page.locator('[data-testid="work-read"]').first().click();
+  await page.waitForTimeout(700);
+
+  // 换到没有批注的第二章，计数才是干净的 0 → 1 → 0
+  await page.locator('[data-testid="toc-item"]').nth(1).click();
+  await expect(page.locator('.reader-opening h1')).toHaveText('DeltaNet');
+
+  const marks = page.locator('[data-testid="reader-body"] mark.ann-mark');
+  const notes = page.locator('[data-testid="annotation-item"]');
+  const beforeMarks = await marks.count();
+  const beforeNotes = await notes.count();
+
+  await page.evaluate(() => {
+    const p = document.querySelector('[data-testid="reader-body"] p');
+    if (!p) throw new Error('没有段落可选');
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
+  await expect(page.locator('[data-testid="selbar"]')).toBeVisible();
+  await page.click('[data-testid="sel-highlight"]');
+  // 写入是「接口 → 失效 → 重取」，别用固定等待赌它已经回来
+  await expect(notes).toHaveCount(beforeNotes + 1);
+  await expect(marks).toHaveCount(beforeMarks + 1);
+
+  // 删除入口在边注的落款行；先问一句，再真删
+  await page.locator('[data-testid="annotation-delete"]').last().click();
+  await expect(page.locator('[data-testid="annotation-delete-confirm"]').last()).toBeVisible();
+  await page.locator('[data-testid="annotation-delete-confirm"]').last().click();
+  await expect(notes).toHaveCount(beforeNotes);
+  await expect(marks).toHaveCount(beforeMarks);
 });
 
 test('阅读：Aa 面板能改行宽与字体，写进 <html> 并立刻生效', async ({ page }) => {
@@ -147,6 +195,42 @@ test('阅读：Aa 面板能改行宽与字体，写进 <html> 并立刻生效', 
   expect(box.width).toBeGreaterThan(400);
   expect(box.width).toBeLessThan(box.size * 32);
   expect(box.font).toContain('Serif');
+
+  // 「满」是文档版面：比「窄」明显更宽，宽表格不用横向拖
+  await page.click('[data-testid="reading-full"]');
+  await page.waitForTimeout(250);
+  await expect(page.locator('html')).toHaveAttribute('data-reading', 'full');
+  const fullBox = await page.evaluate(() => {
+    const p = document.querySelector('[data-testid="reader-body"] p');
+    return p ? Math.round(p.getBoundingClientRect().width) : 0;
+  });
+  expect(fullBox).toBeGreaterThan(box.width * 1.15);
+});
+
+test('阅读：章末能一键进下一章，读到底给出收束', async ({ page }) => {
+  await goto(page, 'shelf');
+  await page.locator('[data-testid="work-read"]').first().click();
+  await page.waitForTimeout(700);
+
+  // 手机/桌面都在章末给出口：标题就是下一章的名字
+  await page.locator('[data-testid="reader-main"]').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator('[data-testid="reader-next"]')).toBeVisible();
+  await expect(page.locator('[data-testid="reader-next"]')).toContainText('DeltaNet');
+
+  await page.click('[data-testid="reader-next"]');
+  await expect(page.locator('.reader-opening h1')).toHaveText('DeltaNet');
+  // 新章从顶部打开，不能沿用上一章滚到底的 scrollTop
+  const top = await page.locator('[data-testid="reader-main"]').evaluate((el) => el.scrollTop);
+  expect(top).toBeLessThan(200);
+
+  // 附录也是下一站，但标签要说清它不是正文章
+  await expect(page.locator('[data-testid="reader-next"]')).toContainText('附录');
+  await page.click('[data-testid="reader-next"]');
+  await expect(page.locator('.reader-opening h1')).toHaveText('公式表');
+
+  // 最后一站：不再给「下一章」，给收束
+  await expect(page.locator('[data-testid="reader-next"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="reader-end-last"]')).toBeVisible();
 });
 
 /* ---------------- 5. 原件只读 ---------------- */
@@ -273,6 +357,29 @@ test('接入：事件流有内容，能筛出未署名并认领', async ({ page 
   await expect(page.locator('text=已被 human 认领').first()).toBeVisible();
 });
 
+test('接入：harness 列表在，能探测 mock', async ({ page }) => {
+  await goto(page, 'agent');
+  await expect(page.locator('[data-testid="agent-harness"]').first()).toBeVisible();
+  await page.click('[data-testid="agent-probe-mock"]');
+  await expect(page.locator('text=握手通过')).toBeVisible({ timeout: 15000 });
+});
+
+test('闭环：平台 Agent 能执行一条判断类闭环', async ({ page }) => {
+  await goto(page, 'loops');
+  const run = page.locator('[data-testid="loop-agent-run"]').first();
+  await expect(run).toBeVisible();
+  await run.click();
+  await expect(page.locator('text=平台 Agent')).toBeVisible({ timeout: 45000 });
+});
+
+test('接入：能生成远端配对码', async ({ page }) => {
+  await goto(page, 'agent');
+  await page.click('[data-testid="agent-pair"]');
+  const code = page.locator('[data-testid="agent-pair-code"]');
+  await expect(code).toBeVisible();
+  await expect(code).toContainText(/\d{6}/);
+});
+
 test('接入：对账能跑，能力清单有内容', async ({ page }) => {
   await goto(page, 'agent');
   await page.click('[data-testid="agent-reconcile"]');
@@ -305,15 +412,64 @@ test('检索：搜不到就说搜不到，不编造', async ({ page }) => {
 
 /* ---------------- 11. 助手 ---------------- */
 
-test('助手：FAB 唤起 → 回答带依据和可执行动作', async ({ page }) => {
+test('助手：选区加入引用 → 苏格拉底首轮提问 → AI 批注接受', async ({ page }) => {
+  await goto(page, 'shelf');
+  await page.locator('[data-testid="work-read"]').first().click();
+  await page.waitForTimeout(600);
+
+  await page.evaluate(() => {
+    const p = document.querySelector('[data-testid="reader-body"] p');
+    if (!p) throw new Error('没有段落可选');
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
+  await page.click('[data-testid="sel-reference"]');
+  await expect(page.locator('[data-testid="ai-panel"]')).toBeVisible();
+  await expect(page.locator('.ai-ref').first()).toBeVisible();
+
+  // 停靠是挤压内容，不是盖住正文
+  const geom = await page.evaluate(() => {
+    const p = document.querySelector('[data-testid="ai-panel"]')?.getBoundingClientRect();
+    const b = document.querySelector('[data-testid="reader-body"]')?.getBoundingClientRect();
+    return p && b ? { panelLeft: p.left, bodyRight: b.right } : null;
+  });
+  expect(geom).not.toBeNull();
+  expect(geom!.panelLeft).toBeGreaterThanOrEqual(geom!.bodyRight - 2);
+
+  await page.selectOption('[data-testid="ai-skill"]', 'socratic');
+  await page.fill('[data-testid="ai-input"]', '别直接告诉我答案，先问我一个问题');
+  await page.click('[data-testid="ai-send"]');
+  const reply = page.locator('[data-testid="ai-msg-ai"]').first();
+  await expect(reply).toContainText('？', { timeout: 15000 });
+
+  // 换到批注技能：mock 会真的走一遍 kb_annotate_suggest
+  await page.selectOption('[data-testid="ai-skill"]', 'annotate');
+  await page.fill('[data-testid="ai-input"]', '给这一段提一条批注');
+  await page.click('[data-testid="ai-send"]');
+  const ann = page.locator('[data-testid="ai-ann-accept"]').first();
+  await expect(ann).toBeVisible({ timeout: 15000 });
+  await ann.click();
+  await expect(page.locator('text=批注已写入')).toBeVisible({ timeout: 10000 });
+});
+
+test('助手：FAB 唤起 → 会话流式回答 → 悬浮/停靠切换', async ({ page }) => {
   await goto(page, 'today');
   await page.click('[data-testid="ai-fab"]');
   await expect(page.locator('[data-testid="ai-panel"]')).toBeVisible();
 
   await page.click('[data-testid="ai-suggest"]'); // 「我有哪些书没读完？」
-  await page.waitForTimeout(1200);
-  await expect(page.locator('[data-testid="ai-msg-ai"]').first()).toBeVisible();
-  await expect(page.locator('[data-testid="ai-action"]').first()).toBeVisible();
+  const reply = page.locator('[data-testid="ai-msg-ai"]').first();
+  await expect(reply).toBeVisible();
+  await expect(reply).toContainText('我看到了你的问题', { timeout: 15000 });
+
+  // 默认停靠；切到悬浮后位置/尺寸由面板自己持有，仍然可见
+  await expect(page.locator('[data-testid="ai-panel"]')).toHaveAttribute('data-surface', 'dock');
+  await page.click('[data-testid="ai-surface"]');
+  await expect(page.locator('[data-testid="ai-panel"]')).toHaveAttribute('data-surface', 'float');
 
   await page.click('[data-testid="ai-close"]');
   await expect(page.locator('[data-testid="ai-panel"]')).toHaveCount(0);

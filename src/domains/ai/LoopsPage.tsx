@@ -129,6 +129,26 @@ export function LoopsPage() {
     }
   }
 
+  async function runAgent(id: string) {
+    const def = byId.get(id);
+    setBusy(`agent:${id}`);
+    try {
+      const r = await endpoints.agentRunLoop(id, { timeoutMs: 180_000 });
+      setOutput({
+        id,
+        title: `${def?.name ?? id} · 平台 Agent`,
+        text: r.task.text || (r.task.errors.join('\n') || `状态：${r.task.status}`),
+        result: r.task.status,
+      });
+      toast(`${def?.name ?? id} → ${r.task.status}`, r.task.status === 'ok' ? 'ok' : 'err');
+      await refetch();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function toggle(id: string, enabled: boolean) {
     setBusy(`cfg:${id}`);
     try {
@@ -271,6 +291,17 @@ export function LoopsPage() {
                     >
                       {busy === `run:${s.id}` ? '跑…' : def.mode === 'assist' ? '拿工单' : '跑一次'}
                     </button>
+                    {def.executors.includes('platform-agent') && (
+                      <button
+                        className="btn btn-sm btn-quiet"
+                        onClick={() => void runAgent(s.id)}
+                        disabled={!!busy}
+                        data-testid="loop-agent-run"
+                        title="让平台自己配置的 harness 执行这条闭环"
+                      >
+                        {busy === `agent:${s.id}` ? '跑…' : '平台跑'}
+                      </button>
+                    )}
                     <button
                       className="btn btn-sm btn-quiet"
                       onClick={() => void toggle(s.id, !configured)}

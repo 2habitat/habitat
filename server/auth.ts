@@ -502,6 +502,10 @@ export const authPlugin = fp<AuthPluginOpts>(async (app: FastifyInstance, opts: 
     if (req.method === 'OPTIONS') return;
     const url = req.url.split('?')[0];
     if (url === '/healthz' || url === '/login' || url === '/logout' || url === '/change-password') return;
+    // harness 的 MCP 回调只认 session token（Bearer），在 /api/agent/mcp 路由里自行校验。
+    if (url === '/api/agent/mcp') return;
+    // 远端 bridge 用一次性配对码加入；码在 /api/agent/bridge/join 路由里校验。
+    if (url === '/api/agent/bridge/join') return;
 
     const isToken = tokenOk(req);
     if (isToken) return;

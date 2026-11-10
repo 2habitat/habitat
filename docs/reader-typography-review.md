@@ -228,6 +228,33 @@
 
 **尚未做**：字体子集化与三种阅读字体的 Web 字体分发；EPUB 页内阅读仍走「下载原件」。
 
+### 6.1 追加（2026-11-09）：批注可删 + 「满」行宽
+
+| 变更 | 落点 |
+|---|---|
+| 边注落款行新增「删除」→ 原位确认（删除这条批注？/ 删除 / 取消），成功后正文高亮同步移除 | `src/domains/reading/Reader.tsx` |
+| 删除走同一条 `propose → validate → commit`；事件 `unannotate`，反向操作带着整行对象，变更页可撤销 | `server/core/space.ts`、`server/core/commit.ts`、`DELETE /api/annotations/:id` |
+| 行宽新增第四档「满」：`--reading-w: min(1180px, 100%)`，正文吃满整列、边注落文末（与 <1320 同一套排法） | `src/styles/tokens.css`、`src/styles/app.css`、`src/app/ui.ts` |
+| Aa 面板：窄 / 中 / 宽 / 满；窄中宽仍按「字数」算，满档按版面算 | `src/domains/reading/Reader.tsx` |
+| 选中正文的动作改到阅读条里（已选 N 字 × / 高亮 / 批注 / 衍生 / 复制引用），不再用浮层压正文；Esc 或 × 退出 | `src/domains/reading/Reader.tsx`、`src/styles/app.css` |
+
+**实测**（1440×900，34 字基准）：正文宽度 中 578 → 宽 672 → 满 928；5 列表格在满档不再被裁。
+
+**验证**：unit 136（新增 3 条批注删除/撤销用例）、e2e 83（新增 1 条删除用例；Aa 用例补满档宽度断言；批注用例断言选区条与选中文字不相交）、`npm run build`。
+
+### 6.2 追加（2026-11-10）：章末出口
+
+| 变更 | 落点 |
+|---|---|
+| 章末「读到这里」下新增「下一章 · 标题 →」，整行可点；附录章标「附录」，不冒充正文章 | `src/domains/reading/Reader.tsx`、`src/styles/app.css` |
+| 最后一站改为「整本读完了 · 回到书架」，不再是读完无处可去的死角 | 同上 |
+| 换章时没有阅读存档就显式回顶：原逻辑只在 `top > 0` 时写 `scrollTop`，点下一章会沿用上一章滚到底的位置 | `Reader.tsx` 位置恢复 effect |
+| 阅读器扉页：附录章的 kicker 显示「· 附录」，不再写「第 N 章」 | 同上 |
+
+**实测**：390×844 下章末出口 y=397、高 50px，不用滚出视口就能点；1440 下与正文同宽（578px）。
+
+**验证**：typecheck、unit 155、e2e 88（新增「章末能一键进下一章」用例）、`npm run build`。
+
 ---
 
 ## 7. 参考
