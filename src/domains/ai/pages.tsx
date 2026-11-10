@@ -42,7 +42,10 @@ export function AssistantPage() {
         eyebrow="AI · 助手"
         title="助手"
         lede="三个入口，一套权限：页内助手看当前对象，协作中心跑多步目标，自动化按规则触发。它只能提案，改语义要你点头。"
-        actions={<button className="btn btn-sm btn-primary" onClick={() => openAi()} data-testid="assistant-open">唤起助手面板</button>}
+        actions={<>
+          <button className="btn btn-sm btn-quiet" onClick={() => navigate('agent')} data-testid="assistant-config">配置 harness</button>
+          <button className="btn btn-sm btn-primary" onClick={() => openAi()} data-testid="assistant-open">唤起助手面板</button>
+        </>}
       />
 
       <div className="mode-grid">

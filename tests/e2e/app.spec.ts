@@ -372,6 +372,16 @@ test('闭环：平台 Agent 能执行一条判断类闭环', async ({ page }) =>
   await expect(page.locator('text=平台 Agent')).toBeVisible({ timeout: 45000 });
 });
 
+test('接入：能打开 agents.yaml 编辑器', async ({ page }) => {
+  await goto(page, 'agent');
+  await page.click('[data-testid="agent-config-open"]');
+  const editor = page.locator('[data-testid="agent-config-editor"]');
+  await expect(editor).toBeVisible();
+  await expect(editor.locator('textarea')).toBeVisible();
+  await editor.getByRole('button', { name: '取消' }).click();
+  await expect(editor).toHaveCount(0);
+});
+
 test('接入：能生成远端配对码', async ({ page }) => {
   await goto(page, 'agent');
   await page.click('[data-testid="agent-pair"]');

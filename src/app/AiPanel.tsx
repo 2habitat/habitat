@@ -10,6 +10,7 @@ import type { AgentEvent, AgentSkill, AnnotationSuggestion, HarnessView, Session
 import { useUi, type AiContext } from './ui.ts';
 import { useRefresh } from '../services/use.ts';
 import { Icon } from '../components/icons.tsx';
+import { navigate } from './router.ts';
 
 interface ToolCard {
   callId: string;
@@ -203,6 +204,7 @@ export function AiPanel() {
   }, [open, session?.id, handleEvent]);
 
   const activeSkill = skills.find((s) => s.id === skillId) ?? null;
+  const modelOption = session?.configOptions?.find((o) => o.id === 'model' || o.category === 'model') ?? null;
   const starters = activeSkill?.starters?.length ? activeSkill.starters : SUGGESTIONS;
   const estimate = useMemo(() => {
     let n = ctx.title.length + 120;
@@ -391,6 +393,25 @@ export function AiPanel() {
         </select>
         <select
           className="select select-sm"
+          value={modelOption?.currentValue ?? ''}
+          disabled={!modelOption}
+          onChange={(e) => {
+            if (!session || !modelOption) return;
+            void endpoints.agentConfig(session.id, modelOption.id, e.target.value).then((r) => {
+              setSession((s) => (s ? { ...s, configOptions: r.configOptions as typeof s.configOptions } : s));
+              toast('模型已切换，对下一轮生效', 'ok');
+            }).catch((err) => toast(err instanceof Error ? err.message : String(err), 'err'));
+          }}
+          aria-label="选择模型"
+          title={modelOption ? '切换当前会话的模型' : '先发一条消息启动会话，模型列表由 harness 返回'}
+          data-testid="ai-model"
+        >
+          {modelOption
+            ? modelOption.options.map((o) => <option key={o.value} value={o.value}>{o.name}</option>)
+            : <option value="">模型：先发一条消息</option>}
+        </select>
+        <select
+          className="select select-sm"
           value={skillId}
           onChange={(e) => void changeSkill(e.target.value)}
           aria-label="选择技能"
@@ -406,6 +427,14 @@ export function AiPanel() {
           data-testid="ai-settings"
         >
           审批：{approvalLabel(approvals)}
+        </button>
+        <button
+          className="btn btn-quiet btn-sm"
+          onClick={() => { close(); navigate('agent'); }}
+          data-testid="ai-config"
+          title="配置 harness、探测、远端配对"
+        >
+          配置
         </button>
       </div>
 
@@ -425,7 +454,7 @@ export function AiPanel() {
               <option value="readonly">只读</option>
             </select>
           </label>
-          {session?.configOptions?.length ? session.configOptions.map((o) => (
+          {session?.configOptions?.length ? session.configOptions.filter((o) => o.id !== modelOption?.id).map((o) => (
             <label key={o.id}>{o.name}
               <select
                 className="select select-sm"

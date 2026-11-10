@@ -100,6 +100,7 @@ export const api = {
   get: <T>(p: string) => request<T>('GET', p),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
   patch: <T>(p: string, b?: unknown) => request<T>('PATCH', p, b),
+  putJson: <T>(p: string, b?: unknown) => request<T>('PUT', p, b),
   del: <T>(p: string) => request<T>('DELETE', p),
   /** 裸 body 上传：文件不走 JSON，别把它 base64 化 */
   put: async <T>(p: string, body: BodyInit, type = 'application/octet-stream'): Promise<T> => {
@@ -319,6 +320,8 @@ export const endpoints = {
   }>('/api/agent/harnesses'),
   agentProbe: (id: string) => api.post<{ ok: boolean; harness: HarnessView }>(`/api/agent/harnesses/${encodeURIComponent(id)}/probe`),
   agentPair: (label?: string) => api.post<{ ok: boolean; code: string; expiresAt: string }>('/api/agent/pair', { label }),
+  agentConfigFile: () => api.get<{ ok: boolean; path: string; raw: string; exists: boolean; source: string; error?: string }>('/api/agent/config'),
+  saveAgentConfigFile: (raw: string) => api.putJson<{ ok: boolean; path: string; source: string; default: string; harnesses: number }>('/api/agent/config', { raw }),
   agentSkills: () => api.get<{ ok: boolean; skills: AgentSkill[] }>('/api/agent/skills'),
   agentCreate: (b: {
     harnessId?: string; focus: { kind: string; id: string; title: string; revision: number };

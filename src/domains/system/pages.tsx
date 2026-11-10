@@ -142,6 +142,10 @@ export function AgentPage() {
   const [probing, setProbing] = useState('');
   const [agentStat, setAgentStat] = useState<{ active: number; total: number; turns: number; errors: number; avgTurnMs: number } | null>(null);
   const [pair, setPair] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [configFile, setConfigFile] = useState<{ path: string; raw: string; exists: boolean; source: string; error?: string } | null>(null);
+  const [editingConfig, setEditingConfig] = useState(false);
+  const [configRaw, setConfigRaw] = useState('');
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const events = (data?.events ?? []).filter((e) => (filter ? e.actor.startsWith(filter) : true));
 
@@ -167,6 +171,34 @@ export function AgentPage() {
       toast(`配对码 ${r.code}（10 分钟内有效）`, 'ok');
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), 'err');
+    }
+  }
+
+  async function openConfig() {
+    try {
+      const r = await endpoints.agentConfigFile();
+      setConfigFile(r);
+      setConfigRaw(r.raw);
+      setEditingConfig(true);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    }
+  }
+
+  async function saveConfig() {
+    setSavingConfig(true);
+    try {
+      const r = await endpoints.saveAgentConfigFile(configRaw);
+      toast(`已保存 ${r.harnesses} 条 harness，默认 ${r.default}`, 'ok');
+      setEditingConfig(false);
+      const list = await endpoints.agentHarnesses();
+      setHarnesses(list.harnesses);
+      const cfg = await endpoints.agentConfigFile();
+      setConfigFile(cfg);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    } finally {
+      setSavingConfig(false);
     }
   }
 
@@ -212,6 +244,9 @@ export function AgentPage() {
         lede="能力表、事件流、未署名改动，三块缺一不可。外部 Agent 和人在界面上走的是同一套读写路径，不留暗门。"
         actions={
           <>
+            <button className="btn btn-sm btn-quiet" onClick={() => void openConfig()} data-testid="agent-config-open">
+              编辑 agents.yaml
+            </button>
             <button className="btn btn-sm btn-quiet" onClick={() => void pairRemote()} data-testid="agent-pair">配对远端</button>
             <button className="btn btn-sm btn-quiet" onClick={() => openSheet('journal')} data-testid="agent-log">补一条事件</button>
             <button className="btn btn-sm btn-primary" onClick={() => void runReconcile()} disabled={busy} data-testid="agent-reconcile">
@@ -231,6 +266,33 @@ export function AgentPage() {
             </code>
             平台必须能访问 <code>--url</code>；NAT 后面先做反向隧道。配对成功后列表会自动出现。
           </span>
+        </div>
+      )}
+
+      {editingConfig && (
+        <div className="panel" style={{ marginTop: 'var(--sp-4)' }} data-testid="agent-config-editor">
+          <div className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+            <strong>编辑 harness 配置</strong>
+            <code className="mono small muted">{configFile?.path ?? 'agents.yaml'}</code>
+          </div>
+          <p className="small muted" style={{ margin: '6px 0 8px' }}>
+            保存后立即生效；YAML 不合法会拒绝并保留原文件。远端 token 不要写进这里，用 <code>{'${ENV}'}</code> 或配对码。
+          </p>
+          <textarea
+            className="input mono"
+            style={{ width: '100%', minHeight: 260, resize: 'vertical', fontSize: 12, lineHeight: 1.55 }}
+            value={configRaw}
+            onChange={(e) => setConfigRaw(e.target.value)}
+            spellCheck={false}
+            aria-label="agents.yaml"
+            placeholder={'version: 1\ndefault: mock\nharnesses:\n  - id: mock\n    label: Mock\n    driver: mock\n'}
+          />
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+            <button className="btn btn-sm btn-quiet" onClick={() => setEditingConfig(false)} disabled={savingConfig}>取消</button>
+            <button className="btn btn-sm btn-primary" onClick={() => void saveConfig()} disabled={savingConfig} data-testid="agent-config-save">
+              {savingConfig ? '保存中…' : '保存并重载'}
+            </button>
+          </div>
         </div>
       )}
 

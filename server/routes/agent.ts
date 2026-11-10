@@ -4,10 +4,14 @@
  * 普通会话接口走用户登录态；/api/agent/mcp 是 harness 的回调口，
  * 只认 Bearer <session token>，在 auth.ts 里单独放行、在本文件里自行校验。
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { parse as yamlParse } from 'yaml';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Habitat } from '../core/space.ts';
 import type { AgentEvent, ApprovalPolicy, ContextRef, SessionFocus } from '../../shared/agent.ts';
 import type { AgentService } from '../agent/service.ts';
+import { loadHarnessFile } from '../agent/config.ts';
 
 export interface AgentRouteDeps {
   hab: Habitat;
@@ -35,7 +39,7 @@ function sse(reply: FastifyReply): void {
 }
 
 export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps): void {
-  const { agent } = deps;
+  const { hab, agent } = deps;
 
   app.get('/api/agent/harnesses', async () => {
     const { file, list } = agent.harnesses();
@@ -233,6 +237,37 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     if (!s) return reply.code(404).send({ ok: false, error: '会话不存在' });
     const r = await s.commitProposal(id);
     return r.ok ? { ok: true } : reply.code(409).send({ ok: false, error: r.error });
+  });
+
+  app.get('/api/agent/config', async () => {
+    const file = path.join(hab.store.root, 'agents.yaml');
+    const raw = await fs.promises.readFile(file, 'utf8').catch(() => '');
+    const loaded = loadHarnessFile(hab.store.root);
+    return { ok: true, path: file, raw, exists: Boolean(raw), source: loaded.source, error: loaded.source === 'default' && raw ? loaded.path : undefined };
+  });
+
+  app.put('/api/agent/config', async (req, reply) => {
+    const b = bodyOf(req);
+    const raw = String(b.raw ?? '');
+    if (raw.length > 200_000) return reply.code(400).send({ ok: false, error: '配置太长（>200KB）' });
+    const file = path.join(hab.store.root, 'agents.yaml');
+    const old = await fs.promises.readFile(file, 'utf8').catch(() => null);
+    try {
+      const parsed = yamlParse(raw) as { harnesses?: { id?: string }[] } | null;
+      const list = Array.isArray(parsed?.harnesses) ? parsed!.harnesses! : [];
+      if (!list.length) throw new Error('至少要有 harnesses 列表，且至少一条');
+      const ids = list.map((h) => String(h.id ?? '').trim());
+      if (ids.some((id) => !id)) throw new Error('每条 harness 都必须有 id');
+      if (new Set(ids).size !== ids.length) throw new Error('harness id 不能重复');
+      await fs.promises.writeFile(file, raw.endsWith('\n') ? raw : `${raw}\n`, 'utf8');
+      const loaded = loadHarnessFile(hab.store.root);
+      if (loaded.source !== 'file') throw new Error('YAML 结构不对，加载器回退了内置配置');
+      return { ok: true, path: file, source: loaded.source, default: loaded.default, harnesses: loaded.harnesses.length };
+    } catch (e) {
+      // 写坏了就还原，绝不把助手留在半坏状态
+      if (old !== null) await fs.promises.writeFile(file, old, 'utf8').catch(() => undefined);
+      return reply.code(400).send({ ok: false, error: (e as Error).message });
+    }
   });
 
   app.post('/api/agent/pair', async (req) => {

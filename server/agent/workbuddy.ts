@@ -259,7 +259,13 @@ export class WorkbuddyHttpDriver {
       this.peer = null;
     });
 
-    await waitPort(port);
+    try {
+      // WorkBuddy CLI 冷启动会先起 Web 服务再挂 ACP，20s 在慢机器上不够
+      await waitPort(port, 60_000);
+    } catch (e) {
+      const detail = this.stderr.trim().slice(-600);
+      throw new Error(`WorkBuddy ACP 端口没有起来：${detail || '启动超时'}`);
+    }
     const peer = new HttpPeer(port, (method, params) => this.onNotification(method, params));
     this.peer = peer;
     await peer.connect();
