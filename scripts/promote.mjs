@@ -13,6 +13,8 @@
  *   node scripts/promote.mjs v0.1.1 --dry-run          # 只看会做什么
  *   node scripts/promote.mjs v0.1.1 --restart "命令"    # 自定义重启
  *   node scripts/promote.mjs v0.1.1 --no-test          # 跳过单元测试
+ *   node scripts/promote.mjs v0.1.1 --skip-ci          # 不动 node_modules（依赖没真变时用；
+ *                                                      #   只有 version 字段变化会被误判为依赖变化）
  *
  * 判断"好"的标准（三个都要过）：
  *   · /healthz 返回 ok
@@ -27,6 +29,9 @@ const args = process.argv.slice(2);
 const ref = args.find((a) => !a.startsWith('--'));
 const dryRun = args.includes('--dry-run');
 const skipTest = args.includes('--no-test');
+// 本机 npm ci 会静默少装包（2026-11-10 实测：报成功但 @pinojs/redact 缺失）。
+// 依赖没真变的时候，跳过它比跑它更安全。
+const skipCi = args.includes('--skip-ci');
 const restartIdx = args.indexOf('--restart');
 const restartCmd = restartIdx >= 0 ? args[restartIdx + 1] : process.env.HABITAT_RESTART_CMD ?? '';
 
@@ -159,7 +164,7 @@ const lockChanged = out(`git diff --name-only ${prevHead} ${targetHead} -- packa
 if (dryRun) {
   console.log('\n演练结论：');
   console.log(`  · 切到 ${targetShort}`);
-  if (lockChanged) console.log('  · 依赖变了，需要 npm ci');
+  if (lockChanged) console.log(skipCi ? '  · 依赖变了，但 --skip-ci：不动 node_modules' : '  · 依赖变了，需要 npm ci');
   console.log('  · npm run build');
   if (!skipTest) console.log('  · npm run test:unit');
   console.log(`  · 重启：${restartCmd || '(未配置)'}`);
@@ -172,7 +177,7 @@ function rollback(reason) {
   console.error(`   回滚到 ${prevShort}…`);
   try {
     sh(`git checkout --quiet ${prevHead}`);
-    if (lockChanged) sh('npm ci');
+    if (lockChanged && !skipCi) sh('npm ci');
     sh('npm run build');
     restart();
     console.error('   已回滚。请确认服务可用后再继续排查。');
@@ -188,10 +193,25 @@ sh(`git checkout --quiet ${targetShort}`);
 console.log(`   现在在 ${targetShort}`);
 
 step(5, '依赖');
-if (lockChanged) {
+if (skipCi) {
+  console.log('   --skip-ci：不动 node_modules（版本字段变化不算依赖变化）');
+  // 抽查上次事故里被静默漏装的包，缺了就明确拒绝继续，而不是把坏树带上线
+  for (const probe of ['@pinojs/redact', 'better-sqlite3', 'tsx']) {
+    if (!fs.existsSync(path.join('node_modules', probe))) {
+      console.error(`   node_modules 缺 ${probe}——依赖树是坏的，--skip-ci 救不了。`);
+      console.error('   先删掉 node_modules 再 npm ci（服务要先停，Windows 会锁 .node），然后重跑发布。');
+      sh(`git checkout --quiet ${prevHead}`, { allowFail: true });
+      process.exit(1);
+    }
+  }
+} else if (lockChanged) {
   console.log('   package-lock 有变化，执行 npm ci');
+  console.log('   ⚠ 本机 npm ci 有过静默少装的前科；装完抽查关键包。');
   try {
     sh('npm ci');
+    for (const probe of ['@pinojs/redact', 'better-sqlite3']) {
+      if (!fs.existsSync(path.join('node_modules', probe))) throw new Error(`npm ci 后仍缺 ${probe}`);
+    }
   } catch (e) {
     rollback(`依赖安装失败：${e.message}`);
   }
