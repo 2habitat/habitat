@@ -244,9 +244,14 @@ export class WorkbuddyHttpDriver {
     const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
     const spawnCmd = isScript ? process.execPath : command;
     const spawnArgs = isScript ? [command, ...args] : args;
+    // 不要继承平台的 NODE_OPTIONS/NODE_PATH：WorkBuddy 自带 node 运行时，
+    // 外来的 require/loader 会让它的 bin/codebuddy 找不到自己的模块。
+    const env = { ...process.env, ...(this.cfg.env ?? {}) };
+    delete env.NODE_OPTIONS;
+    delete env.NODE_PATH;
     this.child = spawn(spawnCmd, spawnArgs, {
       cwd,
-      env: { ...process.env, ...(this.cfg.env ?? {}) },
+      env,
       windowsHide: true,
       shell: useShell,
       stdio: ['pipe', 'pipe', 'pipe'],

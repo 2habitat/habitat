@@ -91,9 +91,12 @@ class AcpProcess {
     const cmd = findCommand(this.command);
     if (!cmd) throw new Error(`找不到 harness 命令：${this.command}`);
     const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+    const env = { ...this.env };
+    delete env.NODE_OPTIONS;
+    delete env.NODE_PATH;
     this.child = spawn(cmd, this.args, {
       cwd: this.cwd,
-      env: this.env,
+      env,
       windowsHide: true,
       // .cmd/.bat 必须经 cmd.exe；交给 Node 的 shell 模式拼引号，避免手写 /c 时多一层引号
       shell: useShell,
