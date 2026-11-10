@@ -91,6 +91,7 @@ function dataOf(frame: string): string {
 
 class HttpPeer {
   connectionId = '';
+  sessionToken = '';
   private getReq: http.ClientRequest | null = null;
   private getRes: http.IncomingMessage | null = null;
   private promptActive = 0;
@@ -98,16 +99,22 @@ class HttpPeer {
   constructor(
     private readonly port: number,
     private readonly onNotify: Listener,
+    private readonly password = '',
   ) {}
+
+  private authHeaders(): Record<string, string> {
+    return this.password ? { authorization: `Bearer ${this.password}` } : {};
+  }
 
   async connect(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const req = http.request({
         host: '127.0.0.1', port: this.port, path: '/api/v1/acp', method: 'GET',
-        headers: { accept: 'text/event-stream' },
+        headers: { accept: 'text/event-stream', ...this.authHeaders() },
       }, (res) => {
         this.getRes = res;
         this.connectionId = String(res.headers['acp-connection-id'] ?? '');
+        this.sessionToken = String(res.headers['acp-session-token'] ?? '');
         if (!this.connectionId) { reject(new Error('WorkBuddy 没有返回 acp-connection-id')); return; }
         res.setEncoding('utf8');
         let buf = '';
@@ -162,6 +169,8 @@ class HttpPeer {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
           'acp-connection-id': this.connectionId,
+          ...(this.sessionToken ? { 'acp-session-token': this.sessionToken } : {}),
+          ...this.authHeaders(),
           'content-length': Buffer.byteLength(body),
         },
       }, (res) => {
@@ -225,6 +234,7 @@ export class WorkbuddyHttpDriver {
   private sessionId = '';
   private options: ConfigOption[] = [];
   private stderr = '';
+  private password = '';
 
   constructor(private readonly cfg: HarnessConfig) {}
 
@@ -249,9 +259,11 @@ export class WorkbuddyHttpDriver {
     const env = { ...process.env, ...(this.cfg.env ?? {}) };
     delete env.NODE_OPTIONS;
     delete env.NODE_PATH;
-    // 这个 WorkBuddy 安装只带 codebuddy-lite-wb.mjs；--acp 会让入口走 headless，
-    // 而 headless/full bundle 都不在。显式让它走 lite-wb（宿主本来也这么设）。
-    env.CODEBUDDY_FORCE_LITE_WB_BUNDLE = '1';
+    // WorkBuddy 桌面端自带的 CLI 只带 lite-wb bundle；官方 npm CLI 有完整 bundle，
+    // 不能无条件覆盖。按命令路径判断，避免把官方 CLI 也逼去 lite-wb。
+    if (/app\.asar\.unpacked/i.test(String(this.cfg.command ?? ''))) {
+      env.CODEBUDDY_FORCE_LITE_WB_BUNDLE = '1';
+    }
     this.child = spawn(spawnCmd, spawnArgs, {
       cwd,
       env,
@@ -261,7 +273,11 @@ export class WorkbuddyHttpDriver {
     }) as ChildProcessWithoutNullStreams;
     this.child.on('error', (e) => { this.stderr = `${this.stderr}${e.message}`.slice(-4000); });
     this.child.stderr.on('data', (d) => { this.stderr = `${this.stderr}${d.toString()}`.slice(-4000); });
-    this.child.stdout.on('data', () => undefined);
+    this.child.stdout.on('data', (d) => {
+      const text = d.toString();
+      const m = /Password\s+(\S+)/.exec(text);
+      if (m) this.password = m[1];
+    });
     this.child.on('exit', () => {
       if (this.peer) this.peer.close();
       this.peer = null;
@@ -274,7 +290,7 @@ export class WorkbuddyHttpDriver {
       const detail = this.stderr.trim().slice(-600);
       throw new Error(`WorkBuddy ACP 端口没有起来：${detail || '启动超时'}`);
     }
-    const peer = new HttpPeer(port, (method, params) => this.onNotification(method, params));
+    const peer = new HttpPeer(port, (method, params) => this.onNotification(method, params), this.password);
     this.peer = peer;
     await peer.connect();
 

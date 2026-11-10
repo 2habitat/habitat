@@ -46,6 +46,16 @@ function defaultDsh(): string {
   return findCommand('dsh');
 }
 
+function defaultCodebuddy(): string {
+  if (process.env.CODEBUDDY_CLI) return process.env.CODEBUDDY_CLI;
+  // .cmd 包装器不适合由 driver 直接 spawn；用包里的 node 脚本入口，driver 会用 node 启动它
+  const js = process.platform === 'win32'
+    ? 'C:/nvm4w/node_global/node_modules/@tencent-ai/codebuddy-code/bin/codebuddy'
+    : '';
+  if (js && exists(js)) return js;
+  return findCommand('codebuddy');
+}
+
 function defaultWorkbuddy(): string {
   if (process.env.WORKBUDDY_CLI) return process.env.WORKBUDDY_CLI;
   const local = process.env.LOCALAPPDATA ?? '';
@@ -59,6 +69,7 @@ function defaultWorkbuddy(): string {
 export function defaultHarnessFile(): HarnessFile {
   const mock = process.env.HABITAT_AGENT_MOCK === '1';
   const dsh = defaultDsh();
+  const cb = defaultCodebuddy();
   const wb = defaultWorkbuddy();
   const harnesses: HarnessConfig[] = [
     {
@@ -80,6 +91,17 @@ export function defaultHarnessFile(): HarnessFile {
       context: { maxChars: 24000 },
       approvals: { annotations: 'ask', body: 'ask' },
       enabled: Boolean(dsh) || mock,
+    },
+    {
+      id: 'codebuddy',
+      label: 'CodeBuddy CLI（官方）',
+      driver: 'http',
+      command: cb || 'codebuddy',
+      args: ['--serve', '--acp', '--auth', 'none', '--tools', ''],
+      cwd: '.habitat/state/agent-cwd',
+      context: { maxChars: 32000 },
+      approvals: { annotations: 'ask', body: 'ask' },
+      enabled: Boolean(cb),
     },
     {
       id: 'workbuddy',

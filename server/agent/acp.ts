@@ -91,10 +91,14 @@ class AcpProcess {
     const cmd = findCommand(this.command);
     if (!cmd) throw new Error(`找不到 harness 命令：${this.command}`);
     const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+    // npm 全局包的 bin 是没有扩展名的 node 脚本；Windows 不能直接 spawn，交给 node
+    const isScript = !/\.(cmd|bat|exe)$/i.test(cmd) && fs.existsSync(cmd);
+    const spawnCmd = isScript ? process.execPath : cmd;
+    const spawnArgs = isScript ? [cmd, ...this.args] : this.args;
     const env = { ...this.env };
     delete env.NODE_OPTIONS;
     delete env.NODE_PATH;
-    this.child = spawn(cmd, this.args, {
+    this.child = spawn(spawnCmd, spawnArgs, {
       cwd: this.cwd,
       env,
       windowsHide: true,
