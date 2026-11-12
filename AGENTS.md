@@ -53,10 +53,24 @@ docs/agent-self-contained-loops.md  平台自闭环分析
 **硬约束**：harness 不直接碰空间目录；写只走 session MCP → `ChangeService`。
 新增 harness 先实现 `AgentDriver`，不要在 UI 里加分支。
 
+## 对外分享在这一带
+
+```
+shared/types.ts          Share 对象（token / targetIds / state / expiresAt）
+server/core/shares.ts    白名单展开、状态判定、访问流水与聚合
+server/routes/share.ts   /s/:token 公开页 + /api/shares 管理接口
+server/share-page.ts     公开页的服务端模板（独立 CSS，不继承管理端）
+src/domains/share/       分享管理页
+docs/sharing.md          边界、状态机、统计口径、部署注意
+```
+
+**硬约束**：公开页只从 `ShareService.scopeOf` 取对象，别在路由里直接 `store.all()`；
+访问统计只追加 `share-views.jsonl`，不要为记一次阅读去跑 ChangeService。
+
 ## 自动化闭环在这一带
 
 ```
-shared/loops.ts        19 条闭环目录（触发/入口/步骤/产物/证据/幂等/降级）
+shared/loops.ts        20 条闭环目录（触发/入口/步骤/产物/证据/幂等/降级）
 server/core/loops.ts   回执、健康、租约、认领、告警、执行、能力协商
 server/index.ts        进程内定时器（每个都必须写回执）
 server/cli.ts          habitat loops …（人 + 外部 harness 的主入口）
@@ -82,8 +96,8 @@ src/domains/ai/LoopsPage.tsx  闭环健康页
 |---|---|---|
 | 类型 | `npm run typecheck` | 包含 src/server/shared/tests |
 | 单元 | `npx vitest run tests/unit/loops.test.ts` | 闭环契约、租约、认领、告警 |
-| 单元（全量） | `npm run test:unit` | 129+ 条 |
-| E2E | `npx playwright test` | 81 条，约 2.5 分钟；测试空间 `.e2e-space` 每次重建 |
+| 单元（全量） | `npm run test:unit` | 191 条 |
+| E2E | `npx playwright test` | 90 条，约 2.5 分钟；测试空间 `.e2e-space` 每次重建 |
 
 E2E 走 `HABITAT_AUTH=off`，不读真实账号文件，也不会碰真实空间。
 
@@ -95,10 +109,12 @@ E2E 走 `HABITAT_AUTH=off`，不读真实账号文件，也不会碰真实空间
 - 进程内轮询（如 `watch-external`）要标 `serverOnly`，否则外部 harness 会重复接管。
 - 健康判定里 `never` 不等于 `down`：新部署必然全是 never，只有 `down` 才判不通过。
 - `loadAutomation` 必须每次返回新的 `loops` 对象，否则改一条配置会污染全局默认值。
+- 分享的可选字段要清空时写 `null` 而不是 `undefined`：变更集是 JSONL，`undefined` 活不过序列化。
+- 公开页要在 `server/auth.ts` 的闸门白名单里：只放 `/s/`，不要顺手放 `/api/`。
 
 ## 参考
 
 - [`docs/automation-loops.md`](docs/automation-loops.md) — 失配分析、Loop Contract、调研与路线
-- [`docs/automation-manual.md`](docs/automation-manual.md) — 19 条闭环的逐条手册（生成）
+- [`docs/automation-manual.md`](docs/automation-manual.md) — 20 条闭环的逐条手册（生成）
 - [`docs/architecture.md`](docs/architecture.md) — 数据模型、写入路径、索引
 - [`skills/habitat-automation/SKILL.md`](skills/habitat-automation/SKILL.md) — 可移植技能：怎么接闭环

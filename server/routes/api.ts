@@ -38,6 +38,7 @@ import {
 import { LOOPS, loopById, renderManual, renderSpaceGuide, type HarnessProfile } from '../../shared/loops.ts';
 import { AgentService } from '../agent/service.ts';
 import { registerAgentRoutes } from './agent.ts';
+import { registerShareRoutes } from './share.ts';
 
 export interface ApiOpts {
   root: string;
@@ -106,6 +107,8 @@ export const api = fp<ApiOpts>(async (app: FastifyInstance, opts: ApiOpts) => {
   });
   app.decorate('habitatAgent', agent);
   registerAgentRoutes(app, { hab, agent });
+  // 对外只读页与分享管理：公开面只有 /s/:token，其余仍在鉴权闸门后面
+  registerShareRoutes(app, { hab });
   app.addHook('onClose', async () => { await agent.closeAll(); });
 
   /* ---------------- 读 ---------------- */

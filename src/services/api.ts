@@ -313,6 +313,17 @@ export const endpoints = {
   unresolvedLinks: () => api.get<{ items: UnresolvedLinkView[] }>('/api/links/unresolved'),
   candidates: () => api.get<{ candidates: WorkCandidateView[] }>('/api/candidates/works'),
   groupWork: (dir: string, title: string) => api.post<{ ok: boolean; slug: string }>('/api/works/group', { dir, title }),
+  /* ---------------- 对外分享（抽印本） ---------------- */
+  shares: () => api.get<SharesView>('/api/shares'),
+  shareOptions: () => api.get<ShareOptionsView>('/api/shares/options'),
+  createShare: (b: ShareDraft) => api.post<{ ok: boolean; share: ShareView }>('/api/shares', b),
+  updateShare: (id: string, b: Partial<ShareDraft> & { state?: 'active' | 'paused' }) =>
+    api.patch<{ ok: boolean; share: ShareView }>(`/api/shares/${encodeURIComponent(id)}`, b),
+  rotateShare: (id: string) => api.post<{ ok: boolean; share: ShareView }>(`/api/shares/${encodeURIComponent(id)}/rotate`),
+  syncShare: (id: string) => api.post<{ ok: boolean; share: ShareView }>(`/api/shares/${encodeURIComponent(id)}/sync`),
+  archiveShare: (id: string) => api.post<{ ok: boolean }>(`/api/shares/${encodeURIComponent(id)}/archive`),
+  shareStats: (id: string, days = 30) =>
+    api.get<{ ok: boolean; stats: ShareStatsView }>(`/api/shares/${encodeURIComponent(id)}/stats?days=${days}`),
   notifications: () => api.get<{ notices: NoticeView[]; unread: number }>('/api/notifications'),  readNotifications: (id?: string) => api.post<{ ok: boolean; marked: number }>('/api/notifications/read', { id }),
   createRule: (b: unknown) => api.post<{ ok: boolean; rule: RuleView }>('/api/rules', b),
   toggleRule: (id: string) => api.post<{ ok: boolean }>(`/api/rules/${id}/toggle`),
@@ -680,4 +691,72 @@ export interface ReconcileView {
   changed: { path: string; from: string; to: string }[];
   unsigned: { path: string; from: string; to: string }[];
   signed: { path: string; event: string }[];
+}
+
+/* ---------------- 对外分享 ---------------- */
+
+export type ShareStateView = 'ok' | 'paused' | 'expired' | 'missing';
+
+export interface ShareTargetView {
+  id: string;
+  kind: 'work' | 'part' | 'collection' | 'note';
+  title: string;
+  meta: string;
+  /** 由专题带进来的成员 */
+  via?: string;
+}
+
+export interface ShareStatsView {
+  total: number;
+  unique: number;
+  today: number;
+  last7: number;
+  last30: number;
+  lastAt: string | null;
+  series: { d: string; views: number; unique: number }[];
+  items: { id: string; kind: string; title: string; views: number; unique: number; lastAt: string | null }[];
+  refs: { host: string; views: number }[];
+}
+
+export interface ShareView {
+  id: string;
+  title: string;
+  intro: string;
+  token: string;
+  state: ShareStateView;
+  archivedAt: string | null;
+  expiresAt: string | null;
+  allowDownload: boolean;
+  byline: string;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
+  targets: ShareTargetView[];
+  counts: { works: number; chapters: number; collections: number; notes: number; targets: number };
+  stats?: ShareStatsView;
+}
+
+export interface SharesView {
+  ok: boolean;
+  baseUrl: string;
+  /** 当前只能给到本机地址：外部读者打不开，要在界面上说清楚 */
+  baseUrlHint: boolean;
+  shares: ShareView[];
+  totals: { active: number; views7: number; visitors7: number; lastAt: string | null };
+}
+
+export interface ShareDraft {
+  title: string;
+  intro?: string;
+  targetIds: string[];
+  expiresAt?: string | null;
+  allowDownload?: boolean;
+  byline?: string;
+}
+
+export interface ShareOptionsView {
+  ok: boolean;
+  works: { id: string; title: string; desc: string; chapters: number; updatedAt: string }[];
+  collections: { id: string; title: string; desc: string; members: number; updatedAt: string }[];
+  notes: { id: string; title: string; kind: string; status: string; tags: string[]; updatedAt: string }[];
 }

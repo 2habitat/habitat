@@ -23,6 +23,8 @@ export default defineConfig({
       '/login': { target: API_TARGET, changeOrigin: false },
       '/logout': { target: API_TARGET, changeOrigin: false },
       '/change-password': { target: API_TARGET, changeOrigin: false },
+      // 对外只读页是服务端渲染的：不代理的话，开发模式下访问分享链接会落到 SPA 兜底，看到的是管理端。
+      '/s/': { target: API_TARGET, changeOrigin: false },
     },
   },
   build: { outDir: 'dist', sourcemap: false, chunkSizeWarningLimit: 1500 },

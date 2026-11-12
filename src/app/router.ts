@@ -8,7 +8,7 @@ import type { IconName } from '../components/icons.tsx';
 export type RouteId =
   | 'today' | 'inbox' | 'calendar' | 'projects' | 'areas' | 'review'
   | 'shelf' | 'continue' | 'compose' | 'reader' | 'editor' | 'data'
-  | 'search' | 'tags' | 'collections' | 'graph'
+  | 'search' | 'tags' | 'collections' | 'shares' | 'graph'
   | 'assistant' | 'changes' | 'jobs' | 'automation' | 'loops'
   | 'storage' | 'agent' | 'budget' | 'files' | 'channels' | 'health' | 'account';
 
@@ -30,6 +30,7 @@ export const ROUTES: { id: RouteId; path: string; group: string; title: string; 
   { id: 'search', path: '/search', group: '连接', title: '检索', icon: 'search' },
   { id: 'tags', path: '/tags', group: '连接', title: '标签', icon: 'tags' },
   { id: 'collections', path: '/collections', group: '连接', title: '专题', icon: 'collections' },
+  { id: 'shares', path: '/shares', group: '连接', title: '分享', icon: 'share' },
   { id: 'graph', path: '/graph', group: '连接', title: '关系', icon: 'graph' },
 
   { id: 'assistant', path: '/assistant', group: 'AI', title: '助手', icon: 'assistant' },

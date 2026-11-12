@@ -639,8 +639,12 @@ export class ChangeService {
     }
 
     if (d.kind === 'yaml') {
-      if (op.t === 'update') d.obj = { ...d.obj, ...op.patch } as unknown as AnyObject;
-      if (op.t === 'archive') d.obj = { ...d.obj, archivedAt: op.archived ? nowISO() : undefined } as unknown as AnyObject;
+      // YAML 对象（work.yaml / shares/*.yaml）也要推进修订号。
+      // 之前只更新内存，重启后 rev 与 updatedAt 会退回旧值，分享列表的排序也跟着错。
+      const cur = (d.obj ?? {}) as Record<string, unknown>;
+      const bumped = { updatedAt: nowISO(), rev: (Number(cur.rev) || 0) + 1 };
+      if (op.t === 'update') d.obj = { ...cur, ...op.patch, ...bumped } as unknown as AnyObject;
+      if (op.t === 'archive') d.obj = { ...cur, archivedAt: op.archived ? nowISO() : undefined, ...bumped } as unknown as AnyObject;
     }
     void sha256;
   }

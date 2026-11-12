@@ -129,6 +129,31 @@ export interface Collection extends BaseObject {
   query?: string;
 }
 
+/**
+ * 对外只读分享（抽印本）。
+ *
+ * 链接本身就是权限：token 不可猜、可随时换；没有 token 的请求在鉴权闸门之前就被挡住。
+ * targetIds 是唯一白名单——作品连带章节，专题连带成员，笔记只公开自己。
+ * 访问数据不写回对象（每看一次都改文件等于把只读页变成写入源），
+ * 只追加到 .habitat/state/share-views.jsonl，统计从日志聚合。
+ */
+export interface Share extends BaseObject {
+  type: 'share';
+  title: string;
+  /** 对外的一段说明；空则用空间名兜底 */
+  intro?: string;
+  /** URL 里的不可猜片段；换链接 = 换 token，旧链接立即失效 */
+  token: string;
+  state: 'active' | 'paused';
+  /** work / collection / note 的 id 白名单 */
+  targetIds: Id[];
+  expiresAt?: ISO;
+  /** 是否允许下载 PDF / EPUB 原件；Markdown 始终只能在线读 */
+  allowDownload?: boolean;
+  /** 抽印本落款；空则用空间名 */
+  byline?: string;
+}
+
 export interface Action extends BaseObject {
   type: 'action';
   text: string;
@@ -280,6 +305,7 @@ export type AnyObject =
   | Annotation
   | Note
   | Collection
+  | Share
   | Action
   | Project
   | Area

@@ -28,7 +28,7 @@ const PAGES = [
   ['today', '今天'], ['inbox', '收件箱'], ['calendar', '日程'], ['projects', '项目'],
   ['areas', '领域'], ['review', '复盘'],
   ['shelf', '书架'], ['continue', '继续阅读'], ['compose', '创作'],
-  ['search', '检索'], ['tags', '标签'], ['collections', '专题'], ['graph', '关系'],
+  ['search', '检索'], ['tags', '标签'], ['collections', '专题'], ['shares', '分享'], ['graph', '关系'],
   ['assistant', '助手'], ['changes', '变更'], ['jobs', '作业'], ['automation', '自动化'], ['loops', '闭环'],
   ['storage', '空间与存储'], ['account', '账号与登录'], ['agent', 'Agent 接入'], ['budget', '权限与预算'], ['health', '健康与恢复'],
 ];
@@ -447,6 +447,45 @@ test('检索：搜不到就说搜不到，不编造', async ({ page }) => {
   await page.click('[data-testid="search-go"]');
   await page.waitForTimeout(700);
   await expect(page.locator('text=没有命中')).toBeVisible();
+});
+
+/* ---------------- 10.5 分享：建一条 → 外部只读页能打开 ---------------- */
+
+test('分享：选内容 → 建立 → 公开页能读，未选中的不出现', async ({ page, context }) => {
+  await goto(page, 'shares');
+  await page.click('[data-testid="share-new"]');
+  await expect(page.locator('.sheet')).toBeVisible();
+
+  await page.fill('[data-testid="share-title"]', 'E2E 抽印本');
+  // 明确挑一本书：勾了书就等于公开它的章节，另一本书必须仍然读不到
+  const book = page.locator('.share-pick', { hasText: 'AI Infra 进阶' }).locator('input[type="checkbox"]');
+  await book.check();
+  await page.click('[data-testid="share-save"]');
+  await expect(page.locator('.sheet')).toHaveCount(0, { timeout: 15000 });
+  await expect(page.locator('[data-testid="share-list"]')).toContainText('E2E 抽印本');
+
+  // 展开看统计与白名单，再把公开链接在一个新页面里打开
+  await page.locator('.share-row', { hasText: 'E2E 抽印本' }).locator('.share-toggle').click();
+  await expect(page.locator('.share-target-list')).toBeVisible();
+  const href = await page.locator('.share-row', { hasText: 'E2E 抽印本' }).locator('a', { hasText: '打开' }).getAttribute('href');
+  expect(href).toContain('/s/');
+
+  const pub = await context.newPage();
+  // 公开页是服务端渲染的，不挂管理端的 app 外壳
+  const res = await pub.goto(href!);
+  expect(res?.status()).toBe(200);
+  await expect(pub.locator('.band')).toContainText('抽印本');
+  await expect(pub.locator('.app')).toHaveCount(0);
+  // 管理端的另一本书不应出现
+  await expect(pub.locator('body')).not.toContainText('Durable Agent 详解');
+  await pub.close();
+
+  // 回到管理页：刚那次访问应该被记进统计
+  await page.click('text=刷新数据');
+  await page.waitForTimeout(800);
+  await expect(
+    page.locator('.share-row', { hasText: 'E2E 抽印本' }).locator('.share-count'),
+  ).not.toHaveText('0 / 0');
 });
 
 /* ---------------- 11. 助手 ---------------- */

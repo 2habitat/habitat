@@ -104,6 +104,18 @@ export const CollectionS = mk('collection', {
   query: z.string().optional(),
 });
 
+export const ShareS = mk('share', {
+  title: z.string().min(1),
+  // null 是「清除这个可选字段」的哨兵：变更集是 JSONL，undefined 活不过序列化
+  intro: z.string().nullish(),
+  token: z.string().min(8),
+  state: z.enum(['active', 'paused']),
+  targetIds: z.array(z.string()),
+  expiresAt: z.string().nullish(),
+  allowDownload: z.boolean().optional(),
+  byline: z.string().nullish(),
+});
+
 export const ActionS = mk('action', {
   text: z.string(),
   due: z.string().optional(),
@@ -245,7 +257,7 @@ export const CursorS = z.object({
 
 const BY_TYPE: Record<string, z.ZodTypeAny> = {
   space: SpaceS, work: WorkS, edition: EditionS, part: PartS, rep: RepS,
-  annotation: AnnotationS, note: NoteS, collection: CollectionS, action: ActionS,
+  annotation: AnnotationS, note: NoteS, collection: CollectionS, share: ShareS, action: ActionS,
   project: ProjectS, area: AreaS, event: EventS, changeset: ChangeSetS,
   proposal: ProposalS, job: JobS,
 };

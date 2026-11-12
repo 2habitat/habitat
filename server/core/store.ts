@@ -6,7 +6,7 @@ import path from 'node:path';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 import type {
   AnyObject, Area, Action, Annotation, BaseObject, Carrier, Collection, CursorRec,
-  EventRec, Id, Note, Part, Project, Rep, Space, Work, Author, Sensitivity,
+  EventRec, Id, Note, Part, Project, Rep, Space, Work, Author, Sensitivity, Share,
 } from '../../shared/types.ts';
 import { newId, nowISO } from '../../shared/id.ts';
 import { parseDoc, serializeDoc, patchFm } from '../../shared/frontmatter.ts';
@@ -21,6 +21,8 @@ export const LAYOUT = {
   works: 'knowledge/works',
   collections: 'knowledge/collections',
   annotations: 'knowledge/annotations',
+  /** 对外分享（抽印本）。放空间根而不是 knowledge/ 下：它不是知识，是知识的出口 */
+  shares: 'shares',
   projects: 'work/projects',
   areas: 'work/areas',
   actions: 'work/actions',
@@ -42,6 +44,8 @@ export const STATE = {
   spaces: '.habitat/spaces.json',
   manifest: '.habitat/manifest.json',
   snapshot: '.habitat/state/snapshot.json',
+  /** 分享访问流水：只追加，统计从它聚合；删了只丢统计，不影响分享本身 */
+  shareViews: '.habitat/state/share-views.jsonl',
 } as const;
 
 const CARRIERS: Record<string, Carrier> = { md: 'md', markdown: 'md', html: 'html', htm: 'html', pdf: 'pdf', epub: 'epub' };
@@ -399,7 +403,13 @@ export class Store {
       if (!structuralChanged && this.fragTryReplay(rel, sig)) continue;
       this.fragStart(rel, sig);
 
-      // 2. 笔记 / 报告 / 收件箱 / 日志 / 复盘 / 专题 / 项目 / 领域 / 作品下的散篇
+      // 2. 分享定义：一个 yaml 一条，id 稳定，token 可换
+      if (rel.startsWith(`${LAYOUT.shares}/`) && /\.ya?ml$/i.test(rel)) {
+        await this.scanShare(rel);
+        continue;
+      }
+
+      // 3. 笔记 / 报告 / 收件箱 / 日志 / 复盘 / 专题 / 项目 / 领域 / 作品下的散篇
       if (rel.endsWith('.md')) {
         const declared = [...partsFromByDir.entries()].find(([dir]) => rel.startsWith(dir));
         if (declared) {
@@ -620,6 +630,31 @@ export class Store {
     const raw = await this.adapter.read(rel);
     if (sig) this.readCache.set(rel, { sig, raw });
     return raw;
+  }
+
+  /**
+   * 一条分享 = 一个 yaml。
+   *
+   * 为什么不做成 state 里的配置：链接能不能用、公开了哪些东西，
+   * 是用户要能直接翻文件确认的事实，不该只活在数据库或内存里。
+   */
+  private async scanShare(rel: string): Promise<void> {
+    const raw = await this.readCached(rel);
+    const fm = safeYaml(raw) as Record<string, unknown>;
+    const targetIds = Array.isArray(fm.targetIds) ? (fm.targetIds as unknown[]).map(String) : [];
+    const share: Share = {
+      ...(this.baseFrom(fm, 'share', rel, 'share') as any),
+      title: String(fm.title ?? '未命名分享'),
+      intro: fm.intro ? String(fm.intro) : undefined,
+      token: String(fm.token ?? ''),
+      state: fm.state === 'paused' ? 'paused' : 'active',
+      targetIds,
+      expiresAt: fm.expiresAt ? String(fm.expiresAt) : undefined,
+      allowDownload: Boolean(fm.allowDownload),
+      byline: fm.byline ? String(fm.byline) : undefined,
+    };
+    this.put(share, rel);
+    this.addStem(stemOf(rel), share.id);
   }
 
   private async scanDoc(rel: string, bytes: number, workSlug?: string): Promise<void> {
@@ -1068,6 +1103,9 @@ export class Store {
         return `${LAYOUT.annotations}/${(obj as Annotation).targetRepId}.jsonl`;
       case 'collection':
         return `${LAYOUT.collections}/${slugify((obj as Collection).title)}.md`;
+      case 'share':
+        // 按 id 落盘而不是按标题：改标题不该让文件改名，换 token 也不该丢统计
+        return `${LAYOUT.shares}/${obj.id}.yaml`;
       case 'project':
         return `${LAYOUT.projects}/${slugify((obj as Project).title)}.md`;
       case 'area':
@@ -1103,6 +1141,12 @@ export class Store {
     if (o.type === 'annotation') {
       const next = { ...o, ...patch, updatedAt: nowISO(), rev: o.rev + 1 };
       return { rel, content: await this.renderAnnotationLine(next as Annotation, rel) };
+    }
+    // 分享是纯 YAML 文件，不能套 frontmatter 文档格式
+    if (o.type === 'share') {
+      const { path: _p, ...rest } = { ...(o as unknown as Record<string, unknown>), ...patch } as Record<string, unknown>;
+      void _p;
+      return { rel, content: yamlStringify({ ...rest, updatedAt: nowISO(), rev: o.rev + 1 }, { lineWidth: 0 }) };
     }
     const raw = await this.adapter.read(rel);
     const parsed = parseDoc(raw);

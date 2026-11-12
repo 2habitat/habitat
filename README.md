@@ -114,7 +114,7 @@ habitat user reset <名字>          # 重置密码，下次登录强制改密
 「自动化」最怕的不是没实现，是**停了没人知道**。所以每条闭环都要留回执：
 
 ```bash
-habitat loops status               # 19 条闭环：谁 ok、谁迟到、谁从没跑过、积压多少
+habitat loops status               # 20 条闭环：谁 ok、谁迟到、谁从没跑过、积压多少
 habitat loops check                # 自检：静默、没归属、两个执行者撞车
 habitat loops run triage-inbox     # 判断类只出工单；确定性类才真跑
 habitat loops beat triage-inbox --ok --produced note-xxx   # 跑完交账
@@ -128,7 +128,7 @@ habitat loops init                                         # 在空间根写 AGE
 超过上限没有回执，`status` 里就是 `late/down`，而不是「看起来一切正常」。
 
 - 设计与失配分析：[`docs/automation-loops.md`](docs/automation-loops.md)
-- 19 条闭环的参考手册：[`docs/automation-manual.md`](docs/automation-manual.md)
+- 20 条闭环的参考手册：[`docs/automation-manual.md`](docs/automation-manual.md)
 - harness 能力声明示例：[`docs/examples/harness.yaml`](docs/examples/harness.yaml)
 - 给 Agent 的项目上下文：[`AGENTS.md`](AGENTS.md)
 - 可移植技能（操作空间、接闭环）：[`skills/habitat-automation/SKILL.md`](skills/habitat-automation/SKILL.md)
@@ -148,8 +148,9 @@ src/           React 界面，按域拆（actions / library / changes / system �
 
 - [`docs/architecture.md`](docs/architecture.md) — 数据模型、写入路径、并发与冲突、索引重建
 - [`docs/automation-loops.md`](docs/automation-loops.md) — 自动化与 AI 闭环：失配分析、Loop Contract、落地路线
-- [`docs/automation-manual.md`](docs/automation-manual.md) — 19 条闭环的参考手册（由 `habitat loops manual` 生成）
+- [`docs/automation-manual.md`](docs/automation-manual.md) — 20 条闭环的参考手册（由 `habitat loops manual` 生成）
 - [`docs/auth.md`](docs/auth.md) — 用户名密码 / 令牌两种凭据、会话、强制改密与账号运维
+- [`docs/sharing.md`](docs/sharing.md) — 对外分享（抽印本）：白名单、token、公开页、访问统计
 - [`docs/lifecycle.md`](docs/lifecycle.md) — 生命周期模型、活性与翻新机制
 - [`docs/workflow.md`](docs/workflow.md) — 开发与日常使用怎么分开，升级怎么不出事
 
@@ -162,6 +163,8 @@ src/           React 界面，按域拆（actions / library / changes / system �
 - **凭据不进仓库**。`.env`、`mail.json`、`auth.json`、`remote.json` 都在 `.gitignore` 里，
   SMTP 密码/授权码存在 `~/.habitat/mail.json`，密码哈希存在 `~/.habitat/auth.json`。
 - **令牌**通过 `KB_TOKEN` 环境变量注入，不写进命令行、不写进文件。
+- **对外分享是白名单，不是开关**。`/s/:token` 只出白名单里的书、专题、笔记，
+  其余对象连标题都不出现；链接可随时暂停、换 token、归档，公开页不缓存。
 - **不删除，只归档**。归档写 `[archived:: 时间]` 标记，文件还在。
 - **原件只读**。带 `source` 的章节和 `assets/originals/` 下的文件不可改。
 

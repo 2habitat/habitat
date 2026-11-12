@@ -90,3 +90,12 @@ export function useActions() {
 export function useBrief() {
   return useQuery({ queryKey: ['brief'], queryFn: () => endpoints.brief(), staleTime: 30_000 });
 }
+
+/** 分享列表与统计：访问数据是外部产生的，打开页面时刷一次就够，不做实时轮询 */
+export function useShares() {
+  return useQuery({ queryKey: ['shares'], queryFn: endpoints.shares, staleTime: 5_000 });
+}
+
+export function useShareOptions() {
+  return useQuery({ queryKey: ['share-options'], queryFn: endpoints.shareOptions, staleTime: 30_000 });
+}
