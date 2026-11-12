@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { Habitat } from './space.ts';
 import type { Author } from '../../shared/types.ts';
 import { safeJoin } from './storage.ts';
+import { todayISO } from '../../shared/id.ts';
 
 /** 这些目录不进浏览视图：它们是运行时状态或版本库，改了会出事 */
 const HIDDEN = new Set(['.git', '.habitat', 'node_modules', '.e2e-space', '.shots']);
@@ -293,7 +294,7 @@ export async function archiveFiles(
   actor: Author = 'human',
 ): Promise<{ moved: { from: string; to: string }[] }> {
   if (!paths.length) throw new Error('没有要归档的文件');
-  const day = new Date().toISOString().slice(0, 10);
+  const day = todayISO();
   const moved: { from: string; to: string }[] = [];
 
   for (const rel of paths) {

@@ -22,6 +22,7 @@ import { parseDoc } from '../../shared/frontmatter.ts';
 import { runReminders } from '../core/reminders.ts';
 import { ingestMail } from '../core/inbox-mail.ts';
 import { collectBrief, renderBrief, runTidy } from '../core/tidy.ts';
+import { reconcileDay, renderDayLines } from '../core/activity.ts';
 import { lifeSnapshot, lifeViewOf } from '../core/lifecycle.ts';
 import { touch, flush } from '../core/usage.ts';
 import { renewPack, renderRenew, markReviewed } from '../core/renew.ts';
@@ -762,9 +763,9 @@ function asBuffer(body: unknown): Buffer | null {
   });
 
   app.post('/api/cursor', async (req, reply) => {
-    const b = req.body as { repId: Id; pct: number };
+    const b = req.body as { repId: Id; pct: number; force?: boolean };
     return wrap(async () => {
-      const r = await hab.setCursor(b.repId, b.pct, actorOf(b, req.headers));
+      const r = await hab.setCursor(b.repId, b.pct, actorOf(b, req.headers), { force: b.force === true });
       return { ok: true, ...r };
     }, reply);
   });
@@ -1196,6 +1197,38 @@ function asBuffer(body: unknown): Buffer | null {
   app.get('/api/maintenance/brief', async () => {
     const data = await collectBrief(hab);
     return { data, brief: renderBrief(data) };
+  });
+
+  /**
+   * 当日对账：今天实际做了什么 vs 今天该做什么。
+   * 只读接口：返回的是证据和提案，勾掉任务仍然走 /api/actions 或 habitat done。
+   */
+  app.get('/api/day/actual', async (req) => {
+    const q = req.query as { date?: string };
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(q.date ?? '') ? q.date! : nowISO().slice(0, 10);
+    const r = await reconcileDay(hab, day);
+    return { ...r, text: renderDayLines(r).join('\n') };
+  });
+
+  /**
+   * 确认「可能已完成」：走同一条 ChangeService，不绕过 propose/commit。
+   * 界面 / CLI 都可以不调它（直接 habitat done），这里只是为了少一次两步提交。
+   */
+  app.post('/api/day/confirm', async (req, reply) => {
+    const b = req.body as { id?: Id };
+    return wrap(async () => {
+      if (!b?.id) throw new Error('缺少任务 id');
+      const a = hab.store.get<Action>(b.id);
+      if (!a || a.type !== 'action') throw new Error(`任务不存在：${b.id}`);
+      if (a.state === 'done') return { ok: true, already: true };
+      const r = await hab.commitOps(
+        [{ t: 'update', id: a.id, patch: { state: 'done' } }],
+        actorOf(b, req.headers),
+        `当日对账：确认完成「${a.text.slice(0, 20)}」`,
+      );
+      await rescan([a.id]);
+      return { ok: true, ...r };
+    }, reply);
   });
 
   /** 翻新证据包：它主张什么 + 库里哪几条可能撞上（召回由服务端做，判定交给 AI） */

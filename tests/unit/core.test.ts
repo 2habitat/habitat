@@ -349,7 +349,8 @@ describe('写路径事件覆盖率', () => {
 
     // 阅读与回顾是单独的事件，不走变更
     const cur = await hab.setCursor(rep.id, 0.4);
-    expect(cur.event.op).toBe('read');
+    expect(cur.event, '首次读必须留下事件').toBeTruthy();
+    expect(cur.event!.op).toBe('read');
     const rev = await hab.review(note.id, '回顾了一次');
     expect(rev.op).toBe('review');
   });

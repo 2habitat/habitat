@@ -69,6 +69,8 @@ export class Habitat {
   }
 
   private closed = false;
+  /** 同一章最近一次真正落 journal 的 read 事件；进程内即可，重启后首条照写 */
+  private readonly lastReadEvent = new Map<Id, { at: number; pct: number }>();
 
   close(): void {
     this.closed = true;
@@ -724,9 +726,17 @@ export class Habitat {
     return this.commitOps([{ t: 'create', obj: e as AnyObject }], input.actor ?? 'human', `新建日程：${input.title}`);
   }
 
-  async setCursor(repId: Id, pct: number, actor: Author = 'human'): Promise<CursorResult> {
+  async setCursor(repId: Id, pct: number, actor: Author = 'human', opts: { force?: boolean } = {}): Promise<CursorResult> {
+    // 游标状态每次都要准（跨设备还原、读一半列表都读它），但 journal 不必跟着刷屏。
+    // 阅读器之前每 1.2 秒一条 read，一个月能写两千多条；这里再兜一层，
+    // 把「几秒内进度几乎没动」的重复上报吃掉，任何客户端都受控。
     const rec = await this.store.setCursor(repId, pct);
     touch(this.store, repId, 'read');
+    const last = this.lastReadEvent.get(repId);
+    const now = Date.now();
+    const jitter = last && !opts.force && now - last.at < 5_000 && Math.abs(pct - last.pct) < 0.01;
+    if (jitter) return { cursor: rec };
+    this.lastReadEvent.set(repId, { at: now, pct });
     const ev = await this.journal.add({
       actor,
       op: 'read',
@@ -778,5 +788,6 @@ export class Habitat {
 
 export interface CursorResult {
   cursor: { repId: string; current: number; furthest: number; updatedAt: string };
-  event: JournalEvent;
+  /** 被去重吃掉时没有事件：游标照常更新，只是不往 journal 里再写一条 */
+  event?: JournalEvent;
 }

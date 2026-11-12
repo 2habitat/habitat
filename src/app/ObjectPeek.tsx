@@ -10,6 +10,7 @@ import { endpoints, type ObjectLinkView } from '../services/api.ts';
 import { navigate, openPeek, closePeek, useLocation } from './router.ts';
 import { Spinner, ErrorBox } from '../components/ui.tsx';
 import { Icon } from '../components/icons.tsx';
+import { todayISO } from '../../shared/id.ts';
 
 const KIND_LABEL: Record<string, string> = {
   action: '任务', event: '日程', note: '笔记', part: '章节',
@@ -27,7 +28,7 @@ const FLOW_LABEL: Record<string, string> = { now: '现在做', next: '接着做'
 const ACTOR_LABEL = (a: string) =>
   a === 'human' ? '你' : a.startsWith('agent:') ? a.slice(6) : a === 'system' ? '系统' : '外部';
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayISO();
 
 export function ObjectPeek() {
   const loc = useLocation();
@@ -281,9 +282,11 @@ export function ObjectPeek() {
                 className="btn btn-sm btn-quiet"
                 disabled={busy || !o?.due}
                 onClick={() => {
-                  const d = new Date(o!.due!);
+                  // 用本地正午起算：new Date('2026-11-12') 是 UTC 午夜，
+                  // 在 UTC+8 会变成当天早上、加一天再 toISOString 又退回原日
+                  const d = new Date(`${o!.due!.slice(0, 10)}T12:00:00`);
                   d.setDate(d.getDate() + 1);
-                  void patch({ due: d.toISOString().slice(0, 10) }, '顺延一天');
+                  void patch({ due: todayISO(d.getTime()) }, '顺延一天');
                 }}
               >
                 顺延一天

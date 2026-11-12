@@ -2507,7 +2507,7 @@ body:has(.reader) .ai-fab { display: none; }
   .reader-chapter { max-width: 8em; }
   .notice { font-size: var(--t-xs); padding: 8px 10px; }
   .reader-main { padding-right: 0; }
-  /* 平板也别撑满：40 字是 CJK 的上限，手机上这个值自然不起作用 */
+  /* 手机正文吃满屏宽是常态（默认档就是「满」）；窄/中/宽仍按字数收 */
   .prose { max-width: var(--reading-w); margin-inline: auto; font-size: var(--fs-body); line-height: 1.8; padding: 0 2px; }
   .prose h2 { margin-top: 1.9em; }
   .prose h2::before { width: 18px; }

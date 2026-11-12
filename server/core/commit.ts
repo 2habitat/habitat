@@ -553,6 +553,9 @@ export class ChangeService {
   private applyToDraft(d: Draft, op: Op): void {
     if (op.t === 'create') {
       const obj = { ...(op.obj as AnyObject), updatedAt: nowISO(), rev: 1 } as AnyObject;
+      // 直接建一条「已完成」的任务时也得记完成时间，否则它永远进不了归档候选
+      const raw = obj as unknown as Record<string, unknown>;
+      if (raw.type === 'action' && raw.state === 'done' && !raw.doneAt) raw.doneAt = nowISO();
       if (d.kind === 'jsonl') {
         d.lines!.push(obj);
       } else if (d.kind === 'inline-tasks' || d.kind === 'inline-events') {
@@ -605,7 +608,22 @@ export class ChangeService {
       const key = this.store.inlineOf.get(op.id) ?? op.id;
       const cur = d.objs!.get(key);
       if (!cur) return;
-      if (op.t === 'update') d.objs!.set(key, { ...cur, ...op.patch } as AnyObject);
+      if (op.t === 'update') {
+        let patch = op.patch;
+        if (d.kind === 'inline-tasks' && 'state' in patch) {
+          const prev = cur as unknown as { state?: string };
+          if (patch.state === 'done' && prev.state !== 'done' && patch.doneAt === undefined) {
+            // 完成时间在这里兜底，而不是让每个调用方记得传：界面勾选、habitat done、
+            // 当日对账确认、外部 harness 提案走的都是这一条落盘路径，漏一处就是
+            // 「已完成 30 天归档」永远 0 候选。调用方显式给了 doneAt 就尊重它。
+            patch = { ...patch, doneAt: nowISO() };
+          } else if (patch.state !== 'done' && prev.state === 'done') {
+            // 重新打开 / 撤销完成：清掉旧的完成时间，免得归档算错
+            patch = { ...patch, doneAt: '' };
+          }
+        }
+        d.objs!.set(key, { ...cur, ...patch } as AnyObject);
+      }
       if (op.t === 'archive') d.objs!.set(key, { ...cur, archivedAt: op.archived ? nowISO() : undefined } as AnyObject);
       return;
     }

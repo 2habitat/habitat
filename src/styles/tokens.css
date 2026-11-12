@@ -29,10 +29,10 @@
   --fs-1: 0.6875rem; --fs-2: 0.75rem; --fs-3: 0.8125rem; --fs-4: 0.875rem;
   --fs-5: 1.0625rem; --fs-6: 1.375rem; --fs-7: 2rem;
 
-  /* 阅读面：字号由 Aa 面板控制，行宽按「几个字」算，换字号不会把行长带跑 */
+  /* 阅读面：字号由 Aa 面板控制。行宽默认「满」（文档优先），JS 起来前也用同一兜底，避免首帧跳窄 */
   --reader-size: 17px;
   --fs-body: var(--reader-size);
-  --reading-w: calc(var(--reader-size) * 34);
+  --reading-w: min(1180px, 100%);
 
   --lh-tight: 1.25;
   --lh-snug: 1.45;
@@ -73,7 +73,7 @@
 :root[data-reading='narrow'] { --reading-w: calc(var(--reader-size) * 30); }
 :root[data-reading='normal'] { --reading-w: calc(var(--reader-size) * 34); }
 :root[data-reading='wide'] { --reading-w: calc(var(--reader-size) * 40); }
-/* 满：文档带多列表格、并排代码时铺到可用宽度；1180px 封顶，超宽屏不至于一行跑太远 */
+/* 满（默认档）：文档带多列表格、并排代码时铺到可用宽度；1180px 封顶，超宽屏不至于一行跑太远 */
 :root[data-reading='full'] { --reading-w: min(1180px, 100%); }
 
 /* 阅读字体：默认黑体做正文，宋体做结构；留给用户自己换 */

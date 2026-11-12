@@ -28,7 +28,7 @@ import {
 import { runRules } from './core/rules.ts';
 import { runReminders } from './core/reminders.ts';
 import { sendDailyBrief, runTidy } from './core/tidy.ts';
-import { appendReceipt, runLoopAlerts } from './core/loops.ts';
+import { appendReceipt, runLoopAlerts, runLoop, readReceipts, latestByLoop } from './core/loops.ts';
 import { nowISO } from '../shared/id.ts';
 
 export const DEFAULT_ROOT = process.env.HABITAT_SPACE ?? path.resolve('space');
@@ -293,6 +293,41 @@ export async function start(rootArg?: string) {
   }, 600_000);
   briefTimer.unref?.();
 
+  /**
+   * 当日对账：日终把「计划 vs 实际」摆出来。
+   * 只读 + 提案，不改任务状态；但回执必须写——否则第二天没人知道它跑没跑。
+   * HABITAT_DAY_HOUR=0 关掉；同一天只跑一次（重启后从回执里恢复这个判断）。
+   */
+  const dayHour = Number(process.env.HABITAT_DAY_HOUR ?? 21);
+  let dayRanOn: string | null = null;
+  const dayTimer = dayHour > 0
+    ? setInterval(() => {
+        const now = new Date();
+        if (now.getHours() < dayHour || writes > 0) return;
+        const today = nowISO().slice(0, 10);
+        void (async () => {
+          if (dayRanOn === null) {
+            const last = latestByLoop(await readReceipts(app.habitat))['day-reconcile'];
+            dayRanOn = last?.at.slice(0, 10) ?? '';
+          }
+          if (dayRanOn === today) return;
+          dayRanOn = today;
+          try {
+            const r = await runLoop(app.habitat, 'day-reconcile', { actor: 'system' });
+            if (r.ran) {
+              console.log(
+                `[habitat] 当日对账：${r.counts?.events ?? 0} 条事件，可能已完成 ${r.counts?.covered ?? 0} / 没碰 ${r.counts?.idle ?? 0}`,
+              );
+            }
+          } catch (e) {
+            dayRanOn = ''; // 失败不占坑，下一个整点重试
+            console.warn(`[habitat] 当日对账出错：${(e as Error).message}`);
+          }
+        })();
+      }, 600_000)
+    : undefined;
+  dayTimer?.unref?.();
+
   // 闭环告警：down 不能只靠人打开页面才发现。每 10 分钟看一次，
   // 同一闭环每天最多一条（Notifier 去重）；HABITAT_LOOP_ALERT_MAIL=1 时同时发信。
   const alertMs = Number(process.env.HABITAT_LOOP_ALERT_MS ?? 600000);
@@ -354,6 +389,7 @@ export async function start(rootArg?: string) {
       if (ruleTimer) clearInterval(ruleTimer);
       if (remindTimer) clearInterval(remindTimer);
       if (briefTimer) clearInterval(briefTimer);
+      if (dayTimer) clearInterval(dayTimer);
       if (tidyTimer) clearInterval(tidyTimer);
       if (alertTimer) clearInterval(alertTimer);
       if (alertBoot) clearTimeout(alertBoot);

@@ -13,8 +13,9 @@
  * 但那是「按需」，不是「维持系统活着的前提」。
  */
 import type { Habitat } from './space.ts';
-import { nowISO } from '../../shared/id.ts';
+import { nowISO, todayISO } from '../../shared/id.ts';
 import { lifeSnapshot } from './lifecycle.ts';
+import { reconcileDay, renderDayLines, type DayReconcile } from './activity.ts';
 
 export interface BriefData {
   at: string;
@@ -39,6 +40,11 @@ export interface BriefData {
   agentReady: { id: string; title: string }[];
   refresh: { id: string; title: string; idleDays: number; why: string }[];
   byVitality: { vitality: string; name: string; n: number }[];
+  /**
+   * 当日对账：今天实际读了什么、改了什么，和今天的待办对上了没有。
+   * 简报只摆证据，不替人勾任务——「可能已完成」仍然要确认。
+   */
+  day: DayReconcile;
 }
 
 const DEFAULT_ARCHIVE_DONE_DAYS = Number(process.env.HABITAT_ARCHIVE_DONE_DAYS ?? 30);
@@ -53,8 +59,8 @@ function daysSince(iso?: string): number {
 }
 
 export async function collectBrief(hab: Habitat): Promise<BriefData> {
-  const today = nowISO().slice(0, 10);
-  const in7 = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+  const today = todayISO();
+  const in7 = todayISO(Date.now() + 7 * 86400_000);
   const t = hab.today(today);
 
   type A = { id: string; text: string; state: string; due?: string; doneAt?: string; projectId?: string; archivedAt?: string };
@@ -87,6 +93,9 @@ export async function collectBrief(hab: Habitat): Promise<BriefData> {
     .sort((a, b) => a.start.localeCompare(b.start));
 
   const snap = await lifeSnapshot(hab);
+  // 行为侧的证据：没有它，简报只能看到「什么还没做」，看不到「今天做了什么」。
+  // 两件事都要摆出来，人才不用靠回忆去判断「这条待办是不是其实已经做完了」。
+  const day = await reconcileDay(hab, today);
 
   return {
     at: nowISO(),
@@ -116,6 +125,7 @@ export async function collectBrief(hab: Habitat): Promise<BriefData> {
     agentReady: snap.agentReady.map((x) => ({ id: x.id, title: x.title })),
     refresh: snap.refresh.map((x) => ({ id: x.id, title: x.title, idleDays: x.idleDays, why: x.why })),
     byVitality: snap.byVitality.map((x) => ({ vitality: x.vitality, name: x.name, n: x.n })),
+    day,
   };
 }
 
@@ -143,6 +153,11 @@ export function renderBrief(b: BriefData): string {
   for (const e of b.events) lines.push(`- ${e.start.slice(11, 16)} ${e.title}`);
   for (const a of b.today) lines.push(`- [ ] ${a.text}${a.due ? `（${a.due}）` : ''}`);
   for (const a of b.overdue) lines.push(`- ⚠ 逾期 ${a.due ?? ''} ${a.text}`);
+
+  // 计划之后紧接着摆「实际」：先看做了什么，再看计划还剩什么，顺序不能反过来。
+  // 反过来读的人会先被待办吓一遍，然后发现「其实今天做了别的事」。
+  lines.push('');
+  lines.push(...renderDayLines(b.day));
 
   if (b.upcoming.length) {
     lines.push('');
@@ -199,6 +214,10 @@ export interface TidyReport {
   dryRun: boolean;
   archived: number;
   candidates: number;
+  /** 已完成但没有完成时间的老任务数（修 doneAt 之前勾掉的，都缺这个字段） */
+  undated: number;
+  /** 本次补写 [done::] 的条数 */
+  backfilled: number;
   brief: string;
   error?: string;
 }
@@ -211,18 +230,60 @@ export interface TidyReport {
 export async function runTidy(hab: Habitat, opts: { dryRun?: boolean } = {}): Promise<TidyReport> {
   const dryRun = opts.dryRun !== false;
   const brief = await collectBrief(hab);
+  type Legacy = { id: string; state: string; doneAt?: string; archivedAt?: string };
+  // 老任务只有 [x]，没有 [done::]。不回填就永远算不出「完成超过 N 天」，
+  // 代谢闭环会一直空转。真实完成时间已经不可考，用任务文件的最后写入时间作
+  // 保守近似：宁可晚归档，也不要凭空猜一个更早的日期。
+  const undated = (hab.store.all('action') as unknown as Legacy[])
+    .filter((a) => a.state === 'done' && !a.doneAt && !a.archivedAt);
   const report: TidyReport = {
     at: brief.at,
     dryRun,
     archived: 0,
     candidates: brief.archiveCandidates.length,
+    undated: undated.length,
+    backfilled: 0,
     brief: renderBrief(brief),
   };
 
-  if (dryRun || brief.archiveCandidates.length === 0) return report;
+  if (dryRun) return report;
 
   try {
-    const ops = brief.archiveCandidates.map((a) => ({ t: 'archive' as const, id: a.id, archived: true }));
+    if (undated.length) {
+      const mtimes = new Map<string, string>();
+      for (const a of undated) {
+        const rel = hab.store.file(a.id) ?? '';
+        if (!rel || mtimes.has(rel)) continue;
+        const st = await hab.store.adapter.stat(rel).catch(() => null);
+        mtimes.set(rel, st?.mtime && !Number.isNaN(Date.parse(st.mtime)) ? st.mtime : nowISO());
+      }
+      const ops = undated.map((a) => ({
+        t: 'update' as const,
+        id: a.id,
+        patch: { doneAt: mtimes.get(hab.store.file(a.id) ?? '') ?? nowISO() },
+      }));
+      const cs = await hab.changes.propose({
+        ops,
+        reason: `管家：为 ${ops.length} 条历史已完成任务补写完成时间`,
+        actor: 'system',
+      } as never);
+      const r = await hab.changes.commit(cs.id);
+      if (!r.ok) {
+        report.error = '回填完成时间时撞车，未改动';
+        return report;
+      }
+      report.backfilled = ops.length;
+      await hab.rescan();
+    }
+
+    // 回填可能立刻造出新的归档候选（老文件的 updatedAt 本来就在 30 天前），
+    // 所以归档必须基于回填之后的快照，不能复用上面的 brief。
+    const fresh = report.backfilled ? await collectBrief(hab) : brief;
+    report.candidates = fresh.archiveCandidates.length;
+    report.brief = renderBrief(fresh);
+    if (!fresh.archiveCandidates.length) return report;
+
+    const ops = fresh.archiveCandidates.map((a) => ({ t: 'archive' as const, id: a.id, archived: true }));
     const cs = await hab.changes.propose({
       ops,
       reason: `管家：归档 ${ops.length} 条已完成超 ${DEFAULT_ARCHIVE_DONE_DAYS} 天的任务`,

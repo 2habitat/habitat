@@ -1,7 +1,7 @@
 # 自动化与 AI 闭环：从「写过的机制」到「可验证的收敛」
 
 > 本文是诊断 + 策略，配套两份可执行产物：
-> - [`automation-manual.md`](automation-manual.md)：19 条闭环的参考手册（由目录生成，不要手改）
+> - [`automation-manual.md`](automation-manual.md)：20 条闭环的参考手册（由目录生成，不要手改）
 > - `shared/loops.ts`：闭环目录（唯一事实源）
 >
 > 结论先行：**空壳不是因为没实现，是因为没有账本。** 没人能回答「谁该跑、跑没跑、跑出了什么」，
@@ -415,7 +415,7 @@ POST /api/loops/:id/claim       # 认领工单里的一条
 POST /api/loops/:id/release     # 归还
 GET  /api/loops/leases          # 谁在执行
 POST /api/loops/alerts          # 把 down 推一次通知
-GET  /api/loops/manual          # 19 条闭环手册（Markdown）
+GET  /api/loops/manual          # 20 条闭环手册（Markdown）
 GET  /api/loops/guide           # 空间级 AGENTS.md（给 harness 的操作手册）
 ```
 
@@ -473,7 +473,7 @@ npx habitat loops check      # 十分钟内有没有两个执行者撞车
 npx habitat loops brief      # 一份「现在该做什么」的交接单
 ```
 
-人不需要记 19 条闭环。只需要在 `down` 出现时决定：修、停、还是明确接受降级。
+人不需要记 20 条闭环。只需要在 `down` 出现时决定：修、停、还是明确接受降级。
 
 ---
 
@@ -481,7 +481,7 @@ npx habitat loops brief      # 一份「现在该做什么」的交接单
 
 | 文件 | 作用 |
 |---|---|
-| `shared/loops.ts` | 19 条闭环的目录 + 健康判定 + 能力协商 + 手册生成（纯函数） |
+| `shared/loops.ts` | 20 条闭环的目录 + 健康判定 + 能力协商 + 手册生成（纯函数） |
 | `server/core/loops.ts` | 配置、回执、状态、执行、自检、交接单 |
 | `server/cli.ts` | `loops list/status/show/run/beat/bind/check/brief/manual` + `rules run` + `links` |
 | `server/routes/api.ts` | `/api/loops*` 全套 + manifest 增加 `automation/loops` |

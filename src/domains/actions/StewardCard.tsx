@@ -58,8 +58,22 @@ export function StewardCard() {
     }
   }
 
-  async function tidy(apply: boolean) {
-    setBusy(apply ? 'apply' : 'dry');
+  /** 当日对账说「可能已完成」时，确认动作仍在这里发生——服务端不替人勾任务 */
+  async function confirmDone(id: string, text: string) {
+    setBusy(`done:${id}`);
+    try {
+      await endpoints.dayConfirm(id);
+      toast(`已勾掉：${text.slice(0, 14)}`, 'ok');
+      await refetch();
+      refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'err');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function tidy(apply: boolean) {    setBusy(apply ? 'apply' : 'dry');
     try {
       const r = await endpoints.tidy(apply);
       if (apply) {
@@ -132,6 +146,40 @@ export function StewardCard() {
         </button>
       ) : (
         <p className="steward-idle" data-testid="steward-tidy">没有待归档的条目</p>
+      )}
+
+      {d.day?.counts.covered === 0 && d.day.counts.unplanned > 0 && (
+        <p className="steward-idle" data-testid="steward-drift">
+          今天没有按计划走：{d.day.counts.idle} 条待办没碰，{d.day.counts.unplanned} 个计划外投入
+        </p>
+      )}
+
+      {d.day?.counts.covered > 0 && (
+        <div className="steward-refresh" data-testid="steward-covered">
+          <div className="steward-refresh-head">
+            <Icon name="check" size={12} />
+            今天可能已完成 {d.day.counts.covered} 条
+          </div>
+          {d.day.planned
+            .filter((x) => x.status === 'covered')
+            .slice(0, 3)
+            .map((p) => (
+              <div key={p.id} className="steward-refresh-item">
+                <div className="small">
+                  {p.text}
+                  <span className="muted"> · {p.evidence[0]?.title ?? '今天动过相关资料'}</span>
+                </div>
+                <button
+                  className="btn btn-sm btn-quiet"
+                  onClick={() => void confirmDone(p.id, p.text)}
+                  disabled={busy !== ''}
+                  data-testid="steward-confirm"
+                >
+                  {busy === `done:${p.id}` ? '提交…' : '勾掉'}
+                </button>
+              </div>
+            ))}
+        </div>
       )}
 
       {d.refresh.length > 0 && (

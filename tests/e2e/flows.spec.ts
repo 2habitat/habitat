@@ -551,7 +551,11 @@ test('今天页：未来任务进「更远」，能一键挪到今天', async ({
     return r.actions.length;
   });
 
-  await later.locator('[data-testid="upcoming-today"]').first().click();
+  // 只点「整理迁移脚本」那一行：更远里可能还有别的更早创建的任务，
+  // 用 .first() 会随插入顺序漂移，最后断言还在这一行就永远对不上。
+  const row = page.locator('[data-testid="upcoming-row"]', { hasText: '整理迁移脚本' });
+  await expect(row).toHaveCount(1);
+  await row.locator('[data-testid="upcoming-today"]').click();
   // 提交要经过 propose → validate → commit → 重扫。用固定 sleep 等它，机器一忙就偶发失败；
   // 改成轮询：条件成立就立刻过，不成立才等到超时。
   await expect

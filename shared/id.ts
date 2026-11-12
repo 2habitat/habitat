@@ -45,6 +45,15 @@ export function kindOf(id: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * 本地日历日（YYYY-MM-DD）。
+ * 别用 new Date().toISOString().slice(0,10)：那是 UTC，UTC+8 的 00:00–08:00
+ * 会算成昨天，于是「挪到今天」把任务挪进逾期。空间里所有日期字段都是本地日历日。
+ */
+export function todayISO(t = Date.now()): string {
+  return nowISO(t).slice(0, 10);
+}
+
 export function nowISO(t = Date.now()): string {
   const d = new Date(t);
   const pad = (n: number, w = 2) => String(n).padStart(w, '0');

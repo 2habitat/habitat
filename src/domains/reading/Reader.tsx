@@ -23,6 +23,7 @@ import type { AnnotationView } from '../../services/api.ts';
 import { onMarkdownReady, prepareMarkdown, renderMarkdown } from '../../services/markdown.ts';
 import { useUi } from '../../app/ui.ts';
 import { navigate, setParam } from '../../app/router.ts';
+import { shouldReport, needsFlush, REPORT_SETTLE_MS, type ReportBaseline } from './throttle.ts';
 
 /* ---------------- 纯工具 ---------------- */
 
@@ -205,10 +206,36 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
   const aaRef = useRef<HTMLDivElement>(null);
   const lastSent = useRef(0);
   const lastSaved = useRef(0);
+  /** 节流要比「有没有推进 5%」，只记时间不够；换章时基线要重置 */
+  const lastSentPct = useRef(-1);
+  const sentRep = useRef('');
+  /** 最新滚动位置，供停稳 / 换章 / 离开页面时补记 */
+  const latestPct = useRef(0);
   const restoredFor = useRef('');
   // 选区回调只挂一次，用 ref 拿「此刻是哪一章」，避免闭包里是首帧的空 rep
   const repRef = useRef(currentRep);
   repRef.current = currentRep;
+
+  const reportCursor = useCallback((pct: number, force = false): boolean => {
+    const rep = currentRep;
+    if (!rep) return false;
+    // 不能拿上一章的 80% 去判断这一章「推进了没有」
+    if (sentRep.current !== rep) {
+      sentRep.current = rep;
+      lastSent.current = 0;
+      lastSentPct.current = -1;
+    }
+    const now = Date.now();
+    // 换章后没有基线，shouldReport 会放行第一条
+    const baseline: ReportBaseline | null = lastSent.current > 0
+      ? { at: lastSent.current, pct: lastSentPct.current }
+      : null;
+    if (!shouldReport(pct, baseline, now, { force })) return false;
+    lastSent.current = now;
+    lastSentPct.current = pct;
+    void endpoints.cursor(rep, pct, force);
+    return true;
+  }, [currentRep]);
 
   // 选区只存「引文 + 定位 + 所属章」：动作都在阅读条里，不再需要屏幕坐标
   const [sel, setSel] = useState<{ text: string; rep: string; from: number; to: number; prefix: string; suffix: string } | null>(null);
@@ -379,22 +406,24 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
     const t = setTimeout(() => {
       // 停留几秒之后还没溢出，说明整章就在眼前——这一章可以算读完
       if (el.scrollHeight - el.clientHeight > 8) return;
-      void endpoints.cursor(currentRep, 1);
+      reportCursor(1, true);
     }, 4000);
     return () => clearTimeout(t);
-  }, [currentRep, html, isDoc, body]);
+  }, [currentRep, html, isDoc, body, reportCursor]);
 
   /* ---- 滚动：只改进度条和当前小节，不整页重渲 ---- */
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
     let raf = 0;
+    let settle = 0;
     const onScroll = () => {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
         const max = el.scrollHeight - el.clientHeight;
         const p = max > 0 ? Math.min(1, el.scrollTop / max) : 0;
+        latestPct.current = p;
         if (barRef.current) barRef.current.style.width = `${(p * 100).toFixed(2)}%`;
 
         const art = articleRef.current;
@@ -410,19 +439,44 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
 
         const now = Date.now();
         if (now - lastSaved.current > 900) { lastSaved.current = now; savePos(); }
-        if (now - lastSent.current > 1200 && currentRep) {
-          lastSent.current = now;
-          void endpoints.cursor(currentRep, p);
-        }
+        reportCursor(p);
+        // 节流会吃掉最后不到 5% 的一段。停稳后补一次，否则「读到哪」会被记少，
+        // 跨设备还原时退回上一个 5% 刻度。
+        if (settle) clearTimeout(settle);
+        settle = window.setTimeout(() => {
+          settle = 0;
+          if (needsFlush(latestPct.current, lastSentPct.current)) {
+            reportCursor(latestPct.current, true);
+          }
+        }, REPORT_SETTLE_MS);
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       el.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
+      if (settle) clearTimeout(settle);
+      // 换章 / 卸载：闭包里还是旧 rep，正好把这一章最后停在哪补上
+      if (needsFlush(latestPct.current, lastSentPct.current)) {
+        reportCursor(latestPct.current, true);
+      }
     };
-    // 首帧 mainRef 还是 null（数据没回来），必须等 rep 挂载后再绑一次
-  }, [currentRep, savePos, repData?.rep.id]);
+  }, [currentRep, savePos, reportCursor, repData?.rep.id]);
+
+  /* ---- 切走 / 关页：把最后停的位置补上，别让最远位置丢在内存里 ---- */
+  useEffect(() => {
+    const flush = () => {
+      if (!currentRep || !needsFlush(latestPct.current, lastSentPct.current)) return;
+      reportCursor(latestPct.current, true);
+    };
+    const onHidden = () => { if (document.hidden) flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [currentRep, reportCursor]);
 
   /* ---- 选中正文 → 阅读条切到选区模式 ---- */
   useEffect(() => {
@@ -557,7 +611,11 @@ export function ReaderPage({ workId, repId, partId, noteId }: { workId?: string;
 
   async function markReadDone() {
     try {
-      await endpoints.cursor(currentRep, 1);
+      // 「标记读完」是明确的语义动作，绕过节流与服务端去重，必须留一条事件
+      await endpoints.cursor(currentRep, 1, true);
+      lastSent.current = Date.now();
+      lastSentPct.current = 1;
+      latestPct.current = 1;
       toast('已标记读完', 'ok');
       refresh();
     } catch (e) {

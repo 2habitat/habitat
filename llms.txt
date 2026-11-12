@@ -13,7 +13,7 @@
 
 - [docs/architecture.md](docs/architecture.md)：文件/事件/索引三层，写入路径，并发与冲突。
 - [docs/automation-loops.md](docs/automation-loops.md)：自动化与 AI 闭环的失配分析、Loop Contract、调研与路线。
-- [docs/automation-manual.md](docs/automation-manual.md)：19 条闭环的逐条参考手册（生成，勿手改）。
+- [docs/automation-manual.md](docs/automation-manual.md)：20 条闭环的逐条参考手册（生成，勿手改）。
 - [docs/lifecycle.md](docs/lifecycle.md)：生命周期、活性、翻新与 AI 的四个切入点。
 - [docs/workflow.md](docs/workflow.md)：开发与生产怎么分开，发布怎么做。
 - [docs/auth.md](docs/auth.md)：账号、会话、令牌与强制改密。

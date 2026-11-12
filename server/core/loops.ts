@@ -23,6 +23,7 @@ import {
 } from '../../shared/loops.ts';
 import { loadMailConfig, sendMail } from './mailer.ts';
 import { collectBrief, renderBrief, runTidy } from './tidy.ts';
+import { reconcileDay, renderDayLines } from './activity.ts';
 import { runReminders } from './reminders.ts';
 import { runRules } from './rules.ts';
 import { ingestMail } from './inbox-mail.ts';
@@ -536,12 +537,31 @@ export async function runLoop(hab: Habitat, id: string, opts: RunOptions = {}): 
     }
     case 'metabolism': {
       const r = await runTidy(hab, { dryRun: opts.dryRun === true });
-      counts = { archived: r.archived, candidates: r.candidates };
+      counts = { archived: r.archived, candidates: r.candidates, backfilled: r.backfilled, undated: r.undated };
       produced = [];
       output = r.dryRun
-        ? `候选 ${r.candidates} 条（dry-run，未落盘）`
-        : `归档 ${r.archived} 条（候选 ${r.candidates}）${r.error ? `；${r.error}` : ''}`;
+        ? `候选 ${r.candidates} 条、待补完成时间 ${r.undated} 条（dry-run，未落盘）`
+        : `归档 ${r.archived} 条、补写完成时间 ${r.backfilled} 条（候选 ${r.candidates}）${r.error ? `；${r.error}` : ''}`;
       if (r.error) result = 'fail';
+      break;
+    }
+    case 'day-reconcile': {
+      const r = await reconcileDay(hab);
+      counts = {
+        events: r.counts.events,
+        active: r.counts.active,
+        planned: r.counts.planned,
+        covered: r.counts.covered,
+        touched: r.counts.touched,
+        idle: r.counts.idle,
+        unplanned: r.counts.unplanned,
+        taskOps: r.counts.taskOps,
+      };
+      produced = [];
+      output = renderDayLines(r).join('\n');
+      note = !r.counts.covered && r.counts.unplanned
+        ? '今天没有按计划走：没有待办被实际工作覆盖，但有计划外投入'
+        : undefined;
       break;
     }
     case 'daily-brief': {

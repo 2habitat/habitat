@@ -78,6 +78,8 @@ export function blockToAction(b: InlineBlock, defaults: Omit<Action, 'text' | 's
     projectId: f.project,
     // 归档标记必须能被读回来，否则「归档」重启后就失效了
     archivedAt: f.archived,
+    // 完成时间必须能被读回来，否则「完成 30 天归档」重启后永远算不出候选
+    doneAt: f.done,
     // 资料引用：`[refs:: a|b]`。用竖线分隔是因为字段值里不能再出现 `]`
     refs: f.refs ? f.refs.split('|').map((s) => s.trim()).filter(Boolean) : undefined,
   };
@@ -100,6 +102,10 @@ export function renderTask(a: Action, extra: Record<string, string> = {}): strin
   if (a.flow && a.flow !== 'next') fields.flow = a.flow;
   if (a.state !== 'open' && a.state !== 'done') fields.state = a.state;
   if (a.archivedAt) fields.archived = a.archivedAt;
+  // 完成时间写在行里，重启/重扫才不会丢。任务重新打开时要显式删掉旧标记：
+  // extra 里带着上一版的 [done::]，不删就会被原样写回，等于「重开但已完成」。
+  if (a.doneAt) fields.done = a.doneAt;
+  else delete fields.done;
   const f = putFields(fields);
   const id = a.id.startsWith('^') ? a.id : `^${a.id}`;
   return `- [${a.state === 'done' ? 'x' : ' '}] ${a.text}${f ? ` ${f}` : ''} ${id}`.trimEnd();

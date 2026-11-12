@@ -116,7 +116,7 @@ let toastSeq = 1;
 export const useUi = create<UiState>((set, get) => ({
   theme: saved.theme ?? 'ningzhi',
   fontSize: saved.fontSize ?? 'md',
-  readingWidth: saved.readingWidth ?? 'normal',
+  readingWidth: saved.readingWidth ?? 'full',
   readerSize: typeof saved.readerSize === 'number' ? Math.min(20, Math.max(15, saved.readerSize)) : 17,
   readerFont: saved.readerFont === 'serif' ? 'serif' : 'sans',
   readerIndent: saved.readerIndent === true,

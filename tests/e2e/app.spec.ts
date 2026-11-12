@@ -233,6 +233,35 @@ test('阅读：章末能一键进下一章，读到底给出收束', async ({ pa
   await expect(page.locator('[data-testid="reader-end-last"]')).toBeVisible();
 });
 
+test('阅读进度：同一位置反复上报不刷屏，真推进了才再记一条', async ({ page }) => {
+  await goto(page, 'today');
+  const readCount = () => page.evaluate(async () => {
+    const r = await (await fetch('/api/journal?op=read&limit=500')).json();
+    return r.events.length;
+  });
+  const before = await readCount();
+  const repId = await page.evaluate(async () => {
+    const o = await (await fetch('/api/objects?type=rep')).json();
+    return o.objects[0].id as string;
+  });
+  const send = (pct: number) => page.evaluate(async ({ id, p }) => {
+    await fetch('/api/cursor', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ repId: id, pct: p }),
+    });
+  }, { id: repId, p: pct });
+
+  // 10 次都停在 40% 上下 1% 以内：旧实现会写 10 条，现在只该留 1 条
+  for (let i = 0; i < 10; i += 1) await send(0.4 + i * 0.001);
+  expect((await readCount()) - before).toBe(1);
+
+  // 真的往前读了 6%：这一条不能吃掉
+  await send(0.46);
+  expect((await readCount()) - before).toBe(2);
+  await noCrash(page);
+});
+
 /* ---------------- 5. 原件只读 ---------------- */
 
 test('原件：打开入库原件章节 → 没有保存按钮，明说可批注可衍生', async ({ page }) => {

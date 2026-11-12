@@ -1,5 +1,6 @@
 import { useEffect, useRef, type HTMLAttributes, type ReactNode } from 'react';
 import { useUi } from '../app/ui.ts';
+import { todayISO } from '../../shared/id.ts';
 
 // 透传其余 props：不给的话 data-testid 这类属性会被静默吞掉，测试就只能靠文案猜
 export function Card({ title, desc, actions, children, className = '', ...rest }: {
@@ -262,8 +263,7 @@ export function fmtTime(s?: string): string {
   return s.slice(11, 16);
 }
 
-export function todayStr(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+/** 本地日历日；传 t 可以算「七天之后」这种相对日期，口径和服务端 nowISO 一致 */
+export function todayStr(t = Date.now()): string {
+  return todayISO(t);
 }

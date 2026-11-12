@@ -236,7 +236,7 @@ export const endpoints = {
   removeAnnotation: (id: string) => api.del<{ ok: boolean; id: string }>(`/api/annotations/${encodeURIComponent(id)}`),
   addAction: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/actions', b),
   addEvent: (b: unknown) => api.post<{ ok: boolean; id: string }>('/api/events', b),
-  cursor: (repId: string, pct: number) => api.post<{ ok: boolean; cursor: { current: number; furthest: number } }>('/api/cursor', { repId, pct }),
+  cursor: (repId: string, pct: number, force = false) => api.post<{ ok: boolean; cursor: { current: number; furthest: number } }>('/api/cursor', { repId, pct, force }),
   review: (id: string, note?: string) => api.post<{ ok: boolean }>('/api/review', { id, note }),
   journalLog: (b: unknown) => api.post<{ ok: boolean }>('/api/journal', b),
   claim: (id: string, actor = 'human') => api.post<{ ok: boolean }>(`/api/journal/${id}/claim`, { actor }),
@@ -299,6 +299,10 @@ export const endpoints = {
     }),
   fsArchive: (paths: string[]) => api.post<{ moved: { from: string; to: string }[] }>('/api/fs/archive', { paths }),
   brief: () => api.get<{ data: BriefView; brief: string }>('/api/maintenance/brief'),
+  /** 当日对账：只读，返回证据与提案 */
+  dayActual: (date?: string) => api.get<DayReconcileView>(`/api/day/actual${date ? `?date=${date}` : ''}`),
+  /** 确认「可能已完成」——仍然走 ChangeService，不绕过提交 */
+  dayConfirm: (id: string) => api.post<{ ok: boolean; already?: boolean }>('/api/day/confirm', { id }),
   tidy: (apply = false) => api.post<{ ok: boolean; report: { dryRun: boolean; archived: number; candidates: number; brief: string; error?: string } }>('/api/maintenance/tidy', { apply }),
   notifyStatus: () => api.get<NotifyStatusView>('/api/notify/status'),
   saveNotifyConfig: (b: Partial<{ host: string; port: number; secure: boolean; user: string; pass: string; to: string; fromName: string; allowFrom: string[] }>) =>
@@ -309,8 +313,7 @@ export const endpoints = {
   unresolvedLinks: () => api.get<{ items: UnresolvedLinkView[] }>('/api/links/unresolved'),
   candidates: () => api.get<{ candidates: WorkCandidateView[] }>('/api/candidates/works'),
   groupWork: (dir: string, title: string) => api.post<{ ok: boolean; slug: string }>('/api/works/group', { dir, title }),
-  notifications: () => api.get<{ notices: NoticeView[]; unread: number }>('/api/notifications'),
-  readNotifications: (id?: string) => api.post<{ ok: boolean; marked: number }>('/api/notifications/read', { id }),
+  notifications: () => api.get<{ notices: NoticeView[]; unread: number }>('/api/notifications'),  readNotifications: (id?: string) => api.post<{ ok: boolean; marked: number }>('/api/notifications/read', { id }),
   createRule: (b: unknown) => api.post<{ ok: boolean; rule: RuleView }>('/api/rules', b),
   toggleRule: (id: string) => api.post<{ ok: boolean }>(`/api/rules/${id}/toggle`),
 
@@ -524,6 +527,39 @@ export interface BriefView {
   stable: number;
   refresh: { id: string; title: string; idleDays: number; why: string }[];
   byVitality: { vitality: string; name: string; n: number }[];
+  /** 当日对账：今天实际做了什么 vs 今天该做什么 */
+  day: DayReconcileView;
+}
+
+export interface DayActivityView {
+  day: string;
+  events: number;
+  meaningful: number;
+  taskOps: number;
+  hits: { id: string; type: string; title: string; ops: string[]; events: number; readPct?: number; lastAt: string }[];
+}
+
+export interface DayPlanView {
+  id: string;
+  text: string;
+  due?: string;
+  status: 'covered' | 'touched' | 'idle';
+  evidence: { kind: 'ref' | 'lexical'; objectId: string; title: string; detail: string }[];
+}
+
+export interface DayReconcileView {
+  day: string;
+  at: string;
+  activity: DayActivityView;
+  planned: DayPlanView[];
+  unplanned: { id: string; title: string; events: number; readPct?: number }[];
+  projects: { id: string; title: string; n: number; titles: string[] }[];
+  counts: {
+    events: number; active: number; planned: number; covered: number;
+    touched: number; idle: number; unplanned: number; taskOps: number;
+  };
+  /** 服务端渲染好的同一份文本（CLI / 邮件 / 页面一致） */
+  text?: string;
 }
 
 export interface NotifyStatusView {

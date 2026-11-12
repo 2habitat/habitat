@@ -15,6 +15,7 @@ import { saveAsset, assetUrl, assetMarkdown } from './core/assets.ts';
 import { mailStatus, sendMail } from './core/mailer.ts';
 import { runReminders } from './core/reminders.ts';
 import { collectBrief, renderBrief, runTidy } from './core/tidy.ts';
+import { reconcileDay, renderDayLines } from './core/activity.ts';
 import { ingestMail } from './core/inbox-mail.ts';
 import { lifeViewOf, lifeSnapshot, renderNext } from './core/lifecycle.ts';
 import { renewPack, renderRenew, markReviewed, reviewOf } from './core/renew.ts';
@@ -99,6 +100,7 @@ function usage(): string {
   habitat stuck [--ai]                     全库卡在哪（--ai 只看 AI 能接手的）
   habitat next                            给 AI 的接手清单
   habitat brief                            今日简报：今天/逾期/7 天内/读一半/收件箱/库状态
+  habitat day [--date YYYY-MM-DD] [--json]  当日对账：今天实际读了什么、改了什么，和待办对上了没有
   habitat tidy [--apply]                   代谢：列出（或执行）可归档的已完成任务
   habitat notify [--test|--send]           邮件提醒：看配置 / 发测试信 / 真发一轮
   habitat rules run [--dry-run]            跑一轮结构化规则（只产出通知）
@@ -901,6 +903,16 @@ async function main(): Promise<number> {
       }
       return 0;
     }
+    case 'day': {
+      const date = arg('date') ?? nowISO().slice(0, 10);
+      const r = await reconcileDay(hab, date);
+      if (flag('json')) {
+        console.log(JSON.stringify(r, null, 2));
+        return 0;
+      }
+      console.log(renderDayLines(r).join('\n'));
+      return 0;
+    }
     case 'brief': {
       const data = await collectBrief(hab);
       console.log(renderBrief(data));
@@ -912,8 +924,10 @@ async function main(): Promise<number> {
       console.log('');
       if (r.dryRun) {
         console.log(`待归档 ${r.candidates} 条已完成任务（超过 ${process.env.HABITAT_ARCHIVE_DONE_DAYS ?? 30} 天）。`);
+        if (r.undated) console.log(`另有 ${r.undated} 条已完成任务没有完成时间，--apply 会先补写 [done::]（用文件最后写入时间近似）。`);
         console.log('加 --apply 真的归档（走变更集，可撤销）。');
       } else {
+        if (r.backfilled) console.log(`已为 ${r.backfilled} 条历史任务补写完成时间。`);
         console.log(r.error ? `出错：${r.error}` : `已归档 ${r.archived} 条（可在变更页整批撤销）。`);
       }
       return r.error ? 1 : 0;

@@ -125,7 +125,7 @@ export function TodayPage() {
 
   /** 不想等到那天就先挪到今天；本质是改 due，不是新建 */
   async function moveToToday(a: ActivityAction) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     try {
       const cs = await endpoints.propose([{ t: 'update', id: a.id, patch: { due: today } }], `顺延到 ${today}`);
       const r = await endpoints.commit(cs.changeset.id);
@@ -155,7 +155,7 @@ export function TodayPage() {
   const all = allActions?.actions ?? [];
   const future = all.filter((a) => a.state !== 'done' && a.due && a.due > todayStr());
   const undated = all.filter((a) => a.state !== 'done' && !a.due);
-  const soon = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+  const soon = todayStr(Date.now() + 7 * 86400_000);
   const in7 = future.filter((a) => a.due! <= soon);
   const later = future.filter((a) => a.due! > soon);
 
