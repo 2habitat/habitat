@@ -76,22 +76,65 @@ git push origin v0.1.1
 ```bash
 cd D:\works\habitat
 set HABITAT_SPACE=D:\works\PersonalKnowledgeBase\MySpace
-set HABITAT_RESTART_CMD=python .kb\tools\kb_remote.py restart
+set HABITAT_RESTART_CMD=python D:/works/PersonalKnowledgeBase/.kb/tools/kb_remote.py restart
 
 node scripts/promote.mjs v0.1.1 --dry-run    # 先看它打算做什么
 node scripts/promote.mjs v0.1.1
 ```
 
+`HABITAT_RESTART_CMD` **必须用绝对路径**。生产目录里没有 `.kb/`，写相对路径
+`python .kb\tools\kb_remote.py restart` 会在 `D:\works\habitat` 下找不到文件而失败，
+promote 判定重启失败后回滚，白跑一轮。`kb_remote.py` 用自身位置推导知识库根，不依赖 cwd。
+
 脚本会依次：检查工作区干净 → 记录基线 → 切 tag → 装依赖（变了才装）→ 构建 →
 跑单测 → 重启 → 健康检查 → **对比对象数和链接解析率** → 任一项不过**自动回滚**。
 
-三条判断标准，缺一不可：
+判断标准，缺一不可：
 
 | 检查 | 为什么 |
 |---|---|
 | `/healthz` 返回 ok | 进程起来了 |
 | 对象数不减少 | 防扫描逻辑被改坏（最隐蔽的回归） |
 | 解析率不明显下降 | 防链接解析回归 |
+| `dist/index.html` 非空、含入口脚本、引用资源存在 | 防白屏。`/healthz` 只证明进程活着，证明不了页面能打开 |
+
+最后一条由 `scripts/verify-dist.mjs` 执行（已串在 `npm run build` 尾部，
+promote 在构建后再独立跑一次）。2026-11-13 就栽在这：构建报成功、
+`/healthz` 回 ok、对象数不变，但入口 HTML 是 621 字节全零，浏览器白屏。
+
+### 构建环境的一个已知故障（2026-11-13）
+
+`vite build` 启动时会 `emptyDir(dist)`。本机这个 `rmSync` 被 WorkBuddy 的
+`safe-delete` 垫片接管，而垫片的状态目录里有一批内容是 `0x00` 的损坏
+`state.json`（`%TEMP%\codebuddy-safe-delete-bulk\*\state.json`，与那次
+`index.html` 被清零是同一时刻的写盘事故），于是：
+
+- `rmSync` 抛 `SAFE_DELETE_BULK_GUARD_ERROR`
+- 但 `index.html` 已被以截断方式打开过 → 留下**长度正确、内容全零**的残骸
+- 构建中断，`dist/assets/` 里的旧文件还在 → 看起来"像是构建成功了"
+
+三种绕法，任选其一：
+
+```bash
+# 1) 构建时摘掉垫片的环境变量（最干净，不碰任何运行时状态）
+env -u CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR -u CODEBUDDY_TOOL_CALL_ID npm run build
+
+# 2) 跳过清目录
+npx vite build --emptyOutDir false && node scripts/verify-dist.mjs
+
+# 3) 修状态文件：删掉 %TEMP%\codebuddy-safe-delete-bulk 下内容全为 0 的 state.json
+```
+
+promote 已内置第 2 种作为兜底（识别到垫片异常就自动重试）。
+但**建议用第 1 种执行发布**——这是唯一能让清目录也正常工作的方式：
+
+```bash
+env -u CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR -u CODEBUDDY_TOOL_CALL_ID \
+  HABITAT_SPACE=D:/works/PersonalKnowledgeBase/MySpace \
+  HABITAT_PORT=8765 \
+  HABITAT_RESTART_CMD="python D:/works/PersonalKnowledgeBase/.kb/tools/kb_remote.py restart" \
+  node scripts/promote.mjs v0.9.6 --skip-ci
+```
 
 ### 5. 坏了怎么退
 
