@@ -223,7 +223,31 @@ step(6, '构建');
 try {
   sh('npm run build');
 } catch (e) {
-  rollback(`构建失败：${e.message}`);
+  /*
+   * 清目录被垫片占位时，vite 会先以截断方式打开 index.html 再抛错，
+   * 留下「长度正确、内容全零」的残骸——服务照常起，浏览器白屏。
+   * 2026-11-13 就这么上线过一次。这里退一步：不删目录直接构建，
+   * 由 build 链尾的 verify-dist 判定产物可用性。
+   */
+  const msg = String(e.message ?? e);
+  if (/safe-delete|emptyDir|SAFE_DELETE/i.test(msg)) {
+    console.log('\n   ⚠ 清空 dist 失败（safe-delete 垫片异常），改为不删目录重新构建');
+    try {
+      // 只跑 vite：tsc 上一次已过，且 build 链尾的体检由下面的统一判据兜
+      sh('npx vite build --emptyOutDir false');
+    } catch (e2) {
+      rollback(`构建失败（含跳过清目录重试）：${e2.message}`);
+    }
+  } else {
+    rollback(`构建失败：${msg}`);
+  }
+}
+
+// 构建报成功不等于能打开：入口可能是空的。判据放在这里，任何路径都要过。
+try {
+  sh('node scripts/verify-dist.mjs');
+} catch (e) {
+  rollback(`产物体检不过：${e.message}`);
 }
 
 if (!skipTest) {
